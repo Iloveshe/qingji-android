@@ -1,0 +1,3 @@
+<resources>
+    <string name="accessibility_description">仅在你选定的微信、支付宝、云闪付和银行 App 中读取可见的支付结果文字，用于本地记账。不点击、不操作支付、不读取密码输入框。你可随时在轻记中暂停或在系统设置中关闭。未授权的 App 不采集。</string>
+</resources>

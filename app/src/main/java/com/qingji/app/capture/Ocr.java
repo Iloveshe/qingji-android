@@ -1,0 +1,48 @@
+package com.qingji.app.capture;
+
+import android.content.*;
+import android.graphics.*;
+import android.net.Uri;
+import com.google.mlkit.vision.common.InputImage;
+import com.google.mlkit.vision.text.TextRecognition;
+import com.google.mlkit.vision.text.TextRecognizer;
+import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions;
+import com.qingji.app.*;
+import com.qingji.app.core.LedgerCore;
+import static com.qingji.app.core.LedgerCore.*;
+import java.io.*;
+import java.util.concurrent.*;
+
+public final class Ocr {
+    private static final ExecutorService decoder=Executors.newSingleThreadExecutor();
+    public interface Callback {void done(boolean success,String message);}
+    public static void uri(Context context,Uri uri,Source source,String origin,String key,Callback callback) {
+        decoder.execute(()-> {
+            Bitmap bitmap=null;
+            try {
+                if(uri==null||!"content".equals(uri.getScheme()))throw new IOException("Content URI required");
+                BitmapFactory.Options opt=new BitmapFactory.Options();opt.inJustDecodeBounds=true;
+                try(InputStream in=context.getContentResolver().openInputStream(uri)){BitmapFactory.decodeStream(in,null,opt);}
+                if(opt.outWidth<=0||opt.outHeight<=0)throw new IOException("Invalid image");
+                int sample=1;while(Math.max(opt.outWidth,opt.outHeight)/sample>3200 || (long)(opt.outWidth/sample)*(opt.outHeight/sample)>8_000_000L)sample*=2;
+                opt.inJustDecodeBounds=false;opt.inSampleSize=sample;
+                try(InputStream in=context.getContentResolver().openInputStream(uri)){bitmap=BitmapFactory.decodeStream(in,null,opt);}
+                if(bitmap==null)throw new IOException("Unable to decode");
+                bitmap(bitmap,source,origin,key,callback);
+            } catch(Exception|OutOfMemoryError ex) {
+                if(bitmap!=null&&!bitmap.isRecycled())bitmap.recycle();callback.done(false,"图片识别失败（"+ex.getClass().getSimpleName()+"）");
+            }
+        });
+    }
+    public static void bitmap(Bitmap bitmap,Source source,String origin,String key,Callback callback) {
+        TextRecognizer recognizer=TextRecognition.getClient(new ChineseTextRecognizerOptions.Builder().build());
+        recognizer.process(InputImage.fromBitmap(bitmap,0)).addOnSuccessListener(result->{
+            String text=result.getText();long now=System.currentTimeMillis();
+            String eventKey=key.isEmpty()?LedgerCore.hash(text):key;
+            Evidence e=new Evidence(source,origin,eventKey,text,now);
+            if(LedgerCore.parse(e,QingJiApp.app().config.ownTails())==null){callback.done(true,"没有识别到可记账的交易");return;}
+            QingJiApp.app().ingest(e,()->callback.done(true,"识别完成，请在账单或待确认中查看"));
+        }).addOnFailureListener(ex->callback.done(false,"OCR 未完成（"+ex.getClass().getSimpleName()+"）"))
+          .addOnCompleteListener(task->{recognizer.close();bitmap.recycle();});
+    }
+}

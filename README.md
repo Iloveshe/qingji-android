@@ -4,6 +4,10 @@
 
 **交付状态：已安装 Android SDK，完成 Android 编译及 lint，生成可安装的 Debug APK。37 项核心测试通过，APK 签名与 16 KB ZIP 对齐检查通过。** 尚未在你的 Redmi 手机上实机验证，不能保证所有银行格式或后台场景都已覆盖。
 
+源码仓库：https://github.com/Iloveshe/qingji-android
+
+安装包发布页：https://github.com/Iloveshe/qingji-android/releases/tag/v0.1.0
+
 ## 第一版实现了什么
 
 | 来源 / 功能 | 实现方式 | 使用条件与边界 |

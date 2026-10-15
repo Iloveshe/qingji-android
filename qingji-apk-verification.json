@@ -1,0 +1,16 @@
+{
+  "file": "qingji-0.1.1-debug.apk",
+  "version": "0.1.1",
+  "version_code": 2,
+  "bytes": 47596632,
+  "sha256": "3e0d9dc51434712f91f728b4d85df36227a373ff3dfa06969e4001115fb20256",
+  "signing_certificate_sha256": "57a1dcdb9b45ff5f2426b0e2786641195eebe5979db1cf9d6ffe5013a3dda833",
+  "signature_verified": true,
+  "same_certificate_as_0_1_0": true,
+  "zip_alignment_16k_verified": true,
+  "lint_errors": 0,
+  "lint_warnings": 2,
+  "core_tests_passed": 37,
+  "update_policy_tests_passed": 31,
+  "device_tested": false
+}

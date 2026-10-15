@@ -1,12 +1,24 @@
-# 轻记 · Android 自动记账第一版
+# 轻记 · Android 自动记账
 
 为 **Redmi Note 12 Turbo / Android 16 / HyperOS 3 / 无 root** 场景编写的原生 Android 项目。默认本地处理，无登录、无服务器。最低 API 26，编译及目标 API 36。
 
-**交付状态：已安装 Android SDK，完成 Android 编译及 lint，生成可安装的 Debug APK。37 项核心测试通过，APK 签名与 16 KB ZIP 对齐检查通过。** 尚未在你的 Redmi 手机上实机验证，不能保证所有银行格式或后台场景都已覆盖。
+**当前版本 0.1.1：已完成 Android 编译及 lint，生成可安装的 Debug APK。37 项记账测试和 31 项更新策略测试通过，APK 签名与 16 KB ZIP 对齐检查通过。** 尚未在你的 Redmi 手机上实机验证，不能保证所有银行格式或后台场景都已覆盖。
 
 源码仓库：https://github.com/Iloveshe/qingji-android
 
-安装包发布页：https://github.com/Iloveshe/qingji-android/releases/tag/v0.1.0
+安装包发布页：https://github.com/Iloveshe/qingji-android/releases/tag/v0.1.1
+
+## 应用更新
+
+0.1.1 增加 **设置 → 应用更新**：当前版本、启动时自动检查、接收测试版、立即检查、下载进度、安装已下载的更新和 GitHub 发布页入口。启动检查默认开启，每 12 小时最多一次；失败时可以随时手动重试。接收测试版默认开启，因为当前 0.1.x 使用 GitHub 预发布渠道。
+
+检查只读取本仓库的公开 Release 信息，不发送账单、短信、截图或模型密钥。检查使用版本列表而非 `/releases/latest`，可发现预发布版本，并按整数 versionCode 选择兼容系统的新版。关闭“启动时自动检查”后仍能手动检查。
+
+下载由你确认后开始，可能使用移动流量，下载期间请保持应用打开。安装包在应用私有缓存中保存，检查文件大小、SHA-256、包名、版本、最低 Android 版本及与已安装 App 相同的签名。系统“允许安装未知应用”授权后，会再次校验安装包并打开安装确认，不能静默安装。中断或失败后可重试，也可从 GitHub 发布页手动下载。
+
+**0.1.0 没有更新入口，需要先手动覆盖安装 0.1.1；不要卸载旧版。** 已发布的 0.1.0 和 0.1.1 使用同一调试签名，覆盖安装保留本地数据。自行编译或 GitHub Actions 备用构建的随机调试签名通常与发布版不同，不能作为发布版升级包。
+
+维护者发布后续版本的要求见 [docs/UPDATES.md](docs/UPDATES.md)。
 
 ## 第一版实现了什么
 
@@ -107,6 +119,7 @@ bash scripts/check-source.sh
 - 截图、屏幕图像只在内存处理，不生成录屏文件。
 - 云端分类默认关闭，开启后仅向你填写的 HTTPS 接口发送金额、币种、商户、类型、本地分类。模型 API Key 使用 Android Keystore 的 AES-GCM 加密保存，不写日志、不包含在导出中。
 - 默认功能不调用云端模型。本项目包含第三方本地 OCR SDK，其初始化行为依赖 SDK；这是“交易识别在本地”，不是经过网络抓包验证的“绝对零网络请求”。
+- 自动版本检查默认开启，仅请求 GitHub 公开版本信息，可在“应用更新”关闭；下载更新需另外确认。
 - 可导出 CSV、清空本地账单、清除模型密钥、撤销系统权限或卸载。
 
 ## 验证与后续校准
@@ -115,4 +128,4 @@ bash scripts/check-source.sh
 
 Android 完整编译与 lint 已通过，Redmi 实机检查仍待进行。微信、支付宝、云闪付和银行文案会变化；要扩大自动覆盖率，需要真实的去敏交易样例来增加解析规则。金额和转账归属有歧义时不能靠开放更多权限消除歧义。
 
-本次环境中的 SDK 位于 `/workspace/toolchains/android-sdk`，JDK 位于 `/workspace/toolchains/jdk-17`。安装与构建脚本为 `scripts/setup-android.py`；GitHub Actions 备用构建方式见 [docs/GITHUB-BUILD.md](docs/GITHUB-BUILD.md)。工作流需要手动触发，上传仓库本身不会运行云端构建。
+本次环境中的 SDK 位于 `/workspace/toolchains/android-sdk`，JDK 位于 `/workspace/toolchains/jdk-17`。安装与构建脚本为 `scripts/setup-android.py`；GitHub Actions 备用构建方式见 [docs/GITHUB-BUILD.md](docs/GITHUB-BUILD.md)。备用构建工作流需要手动触发；发布工作流在其配置提交到 main 时自动校验和上传已有的已签名产物，不会重新生成随机签名。

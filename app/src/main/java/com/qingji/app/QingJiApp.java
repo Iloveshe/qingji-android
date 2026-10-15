@@ -4,6 +4,7 @@ import android.app.*;
 import android.content.*;
 import android.os.*;
 import com.qingji.app.core.LedgerCore;
+import com.qingji.app.update.UpdateManager;
 import static com.qingji.app.core.LedgerCore.*;
 import java.util.concurrent.*;
 
@@ -15,9 +16,10 @@ public final class QingJiApp extends Application {
     private final ExecutorService cloudWorker=Executors.newSingleThreadExecutor();
     public Config config;
     public LedgerStore store;
+    public UpdateManager updater;
     public static QingJiApp app() {return instance;}
     @Override public void onCreate() {
-        super.onCreate();instance=this;config=new Config(this);store=new LedgerStore(this);
+        super.onCreate();instance=this;config=new Config(this);store=new LedgerStore(this);updater=new UpdateManager(this);
         config.flag("notification_connected",false);config.flag("accessibility_connected",false);config.flag("capture_running",false);
         NotificationChannel channel=new NotificationChannel(CHANNEL,"屏幕识别运行状态",NotificationManager.IMPORTANCE_LOW);
         getSystemService(NotificationManager.class).createNotificationChannel(channel);

@@ -9,11 +9,11 @@ on:
       release_tag:
         description: Existing release tag
         required: true
-        default: v0.1.0
+        default: v0.1.1
       assets_ref:
         description: Git ref containing the verified release files
         required: true
-        default: release-assets/v0.1.0
+        default: release-assets/v0.1.1
 
 permissions:
   contents: read
@@ -28,7 +28,7 @@ jobs:
       - name: Fetch the verified binaries
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.assets_ref || 'release-assets/v0.1.0' }}
+          ref: ${{ inputs.assets_ref || 'release-assets/v0.1.1' }}
           path: release-files
           persist-credentials: false
       - name: Verify and publish the existing build
@@ -36,7 +36,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ inputs.release_tag || 'v0.1.0' }}
+          RELEASE_TAG: ${{ inputs.release_tag || 'v0.1.1' }}
           SOURCE_COMMIT: ${{ github.sha }}
         run: |
           sha256sum --check SHA256SUMS.txt
@@ -45,11 +45,16 @@ jobs:
           tag = os.environ['RELEASE_TAG']
           if not re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+', tag):
               raise SystemExit('Invalid release tag')
-          files = [
-              'qingji-0.1.0-debug.apk', 'qingji-app.zip',
-              'qingji-android-source.zip', 'qingji-0.1.0-debug.apk.sha256',
-              'qingji-apk-verification.json', 'qingji-install-guide.md', 'SHA256SUMS.txt'
-          ]
+          version = tag[1:]
+          apk = 'qingji-' + version + '-debug.apk'
+          files = [apk, 'qingji-app.zip', 'qingji-android-source.zip', apk + '.sha256',
+                   'qingji-apk-verification.json', 'qingji-install-guide.md', 'update.json', 'SHA256SUMS.txt']
+          update = json.loads(pathlib.Path('update.json').read_text())
+          if (update['schemaVersion'] != 1 or update['applicationId'] != 'com.qingji.app'
+              or update['versionName'] != version or update['apkName'] != apk
+              or update['apkSize'] != pathlib.Path(apk).stat().st_size
+              or update['sha256'] != hashlib.sha256(pathlib.Path(apk).read_bytes()).hexdigest()):
+              raise SystemExit('Update manifest does not match the verified APK')
           for name in files:
               subprocess.run(['gh', 'release', 'upload', tag, name, '--clobber'], check=True)
           response = subprocess.check_output(
@@ -69,5 +74,5 @@ jobs:
                   raise SystemExit('Upload digest mismatch: ' + name)
           subprocess.run(['gh', 'release', 'edit', tag, '--target', os.environ['SOURCE_COMMIT'],
                           '--draft=false', '--prerelease'], check=True)
-          print('All seven release files verified and published')
+          print('All eight release files and update manifest verified and published')
           PY

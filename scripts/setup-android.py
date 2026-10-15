@@ -171,6 +171,9 @@ run([PROJECT / 'gradlew', '--no-daemon', *gradle_proxy, *java_opts, ':app:assemb
 apk = PROJECT / 'app/build/outputs/apk/debug/app-debug.apk'
 if not apk.exists():
     raise RuntimeError('Build returned without an APK')
-delivery = Path('/workspace/library-files/qingji-0.1.0-debug.apk')
+metadata = json.loads((apk.parent / 'output-metadata.json').read_text())
+version = metadata['elements'][0]['versionName']
+delivery = Path('/workspace/library-files') / ('qingji-' + version + '-debug.apk')
+delivery.parent.mkdir(parents=True, exist_ok=True)
 shutil.copy2(apk, delivery)
 print('APK generated: ' + str(delivery), flush=True)

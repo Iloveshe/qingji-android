@@ -1,0 +1,6 @@
+8a5f11b82e09e3667f704609bdea7d0aaec80d4f81ff2e4a5d314f7891039d3e  qingji-0.1.0-debug.apk
+5267b92da55e87a2e5a73d08641437cf72fc9231d11af5bc11ef72c6b8a3ac01  qingji-app.zip
+04d09fba8851c19fd7b80e50ec2b967dc4fdfa80df1bebfbb41315f0e116a9b1  qingji-android-source.zip
+523af4985bf8dc74ab5b7f505d44e763096a93e16edc4d7ce6cf7ce270629450  qingji-0.1.0-debug.apk.sha256
+3e240654cdb62f24e9772e69c114fb99e046e79d8cf46d21775f74556b2ced1f  qingji-apk-verification.json
+a50ed565d62fe701e0f34d49fd51e0399b91fdbb7304b577fd112b51eede7503  qingji-install-guide.md

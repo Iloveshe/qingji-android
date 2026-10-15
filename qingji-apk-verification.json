@@ -1,0 +1,9 @@
+{
+  "file": "qingji-0.1.0-debug.apk",
+  "bytes": 50834634,
+  "sha256": "8a5f11b82e09e3667f704609bdea7d0aaec80d4f81ff2e4a5d314f7891039d3e",
+  "lint_errors": 0,
+  "lint_warnings": 2,
+  "core_tests_passed": 37,
+  "device_tested": false
+}

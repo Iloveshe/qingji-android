@@ -66,7 +66,7 @@ public final class MainActivity extends Activity {
     }
     @Override protected void onResume(){super.onResume();
         if(!registered){ContextCompat.registerReceiver(this,updates,new IntentFilter(QingJiApp.REFRESH),ContextCompat.RECEIVER_NOT_EXPORTED);registered=true;}
-        ScreenshotScanJob.schedule(this);load();app.updater.attach(updateUi);
+        ScreenshotScanJob.schedule(this);load();app.refresh();app.updater.attach(updateUi);
         if(app.config.flag("update_waiting_permission")){app.config.flag("update_waiting_permission",false);if(getPackageManager().canRequestPackageInstalls())app.updater.verifyForInstall();else toast("尚未允许安装更新，可在设置页重试");}
         app.updater.check(false);
     }
@@ -148,6 +148,11 @@ public final class MainActivity extends Activity {
         gap(sources,12);toggle(sources,"新到达的交易短信","仅处理允许号码发来的交易信息，忽略验证码",app.config.flag("sms"),this::toggleSms);
         gap(sources,12);toggle(sources,"支付页面文字","只读取勾选 App 的可见交易文字，无点击操作",app.config.flag("accessibility"),on->{app.config.flag("accessibility",on);if(on&&!accessibilityAccess())confirmAccessibility();});
         add(sources,button(accessibilityAccess()?"无障碍已授权 · 查看系统设置":"开启支付页面识别权限",this::confirmAccessibility));
+        gap(sources,12);toggle(sources,"支付窗口自动 OCR（无通知）","Android 14+：文字读不到时自动识别支付窗口，不必每次授权录屏",app.config.flag("accessibility_ocr"),this::toggleAutoOcr);
+        gap(sources,8);add(sources,text("云闪付可对当前选定窗口补识别；其他选定 App 仅在检测到交易结果或详情提示时补识别。图片不保存、不上传。缺少日期或方向会进待确认；安全页面可能无法读取。",12,MUTED,false));
+        gap(sources,12);toggle(sources,"悬浮采集状态","需要“显示在其他应用上层”和页面无障碍服务；可拖动，点按返回轻记",app.config.flag("floating_status"),this::toggleFloating);
+        add(sources,button(Settings.canDrawOverlays(this)?"悬浮窗已授权 · 查看设置":"允许显示在其他应用上层",this::overlaySettings));
+        gap(sources,8);add(sources,text(app.config.text("page_status","页面服务尚未连接"),12,MUTED,false));
         gap(sources,12);toggle(sources,"新截图自动识别","授权后监测截屏目录；不扫描普通相册和旧截图",app.config.flag("screenshots"),this::toggleImages);
         add(sources,button("选择或分享一张截图识别",this::pickImage));gap(sources,12);
         add(sources,text("临时屏幕识别",15,INK,true));gap(sources,4);add(sources,text("需要系统屏幕授权及无障碍来识别当前 App；仅处理勾选 App。每 4 秒最多识别一帧，锁屏后停止，可能增加耗电。",12,MUTED,false));gap(sources,8);
@@ -206,11 +211,24 @@ public final class MainActivity extends Activity {
     private void toggle(LinearLayout parent,String title,String subtitle,boolean checked,java.util.function.Consumer<Boolean> callback){
         LinearLayout row=horizontal();LinearLayout labels=column();labels.addView(text(title,15,INK,true));labels.addView(text(subtitle,12,MUTED,false));row.addView(labels,new LinearLayout.LayoutParams(0,-2,1));Switch s=new Switch(this);s.setContentDescription(title);s.setChecked(checked);s.setMinWidth(dp(56));s.setMinHeight(dp(48));s.setOnCheckedChangeListener((b,on)->callback.accept(on));row.addView(s);add(parent,row);
     }
+    private void toggleAutoOcr(boolean on){
+        if(!on){app.config.flag("accessibility_ocr",false);app.refresh();return;}
+        if(Build.VERSION.SDK_INT<34){toast("自动窗口 OCR 需要 Android 14 或更新系统，可使用临时屏幕识别");load();return;}
+        new AlertDialog.Builder(this).setTitle("自动识别支付窗口")
+            .setMessage("开启后，轻记可在后台对当前可见、已勾选的云闪付窗口，以及其他已勾选 App 的交易结果窗口截图并本地识别。跳过可识别的密码或输入页面，锁屏或切换窗口后丢弃未完成结果。图片不保存、不上传，也不会点击或操作付款。\n\n需要系统无障碍授权。升级后若画面读取不可用，请在系统无障碍中关闭再开启轻记。")
+            .setNegativeButton("取消",(d,w)->load()).setPositiveButton("开启",(d,w)->{app.config.flag("accessibility_ocr",true);app.config.flag("accessibility",true);app.refresh();if(!accessibilityAccess())confirmAccessibility();load();}).show();
+    }
+    private void toggleFloating(boolean on){
+        app.config.flag("floating_status",on);
+        if(on){app.config.flag("accessibility",true);if(!Settings.canDrawOverlays(this))overlaySettings();else if(!accessibilityAccess())confirmAccessibility();}
+        app.refresh();load();
+    }
+    private void overlaySettings(){infoAction("显示在其他应用上层","这项权限用于悬浮采集状态，不用于读取其他应用。请在系统页允许轻记显示在其他应用上层，然后返回；页面无障碍服务也需要开启。",()->open(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,Uri.parse("package:"+getPackageName()))));}
     private boolean settingContains(String setting,Class<?> service){String values=Settings.Secure.getString(getContentResolver(),setting);if(values==null)return false;ComponentName wanted=new ComponentName(this,service);for(String entry:values.split(":")){ComponentName actual=ComponentName.unflattenFromString(entry);if(wanted.equals(actual))return true;}return false;}
     private boolean notificationAccess(){return settingContains("enabled_notification_listeners",PaymentNotificationService.class);}
     private boolean accessibilityAccess(){return settingContains(Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,PaymentAccessibilityService.class);}
     private void openNotificationSettings(){infoAction("支付通知读取","授权后，轻记只处理勾选 App 的新交易通知。验证码和非交易内容不会保存。隐藏金额的通知无法自动识别。",()->open(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)));}
-    private void confirmAccessibility(){infoAction("支付页面识别","轻记只读取你勾选的支付 App 中可见的交易文字，不点击、转账或读取密码框。Android 系统会提示无障碍具有较大的访问范围；你可以随时在系统设置关闭。",()->open(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));}
+    private void confirmAccessibility(){infoAction("支付页面识别","轻记读取你勾选 App 中可见的交易文字；另行开启自动 OCR 后，还可截图识别当前支付窗口，图片不保存、不上传。跳过可识别的密码或输入页面，不点击、不操作支付。系统会提示无障碍具有较大的访问范围，你可以随时关闭。",()->open(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));}
     private void toggleSms(boolean on){if(!on){app.config.flag("sms",false);return;}if(checkSelfPermission(Manifest.permission.RECEIVE_SMS)==PackageManager.PERMISSION_GRANTED){app.config.flag("sms",true);return;}app.config.flag("sms",false);infoAction("交易短信识别","只处理授权后新到达、来自允许号码前缀的交易短信。不会读取历史短信，不处理验证码。",()->requestPermissions(new String[]{Manifest.permission.RECEIVE_SMS},SMS_PERMISSION));}
     private void enableImages(){app.config.prefs.edit().putBoolean("screenshots",true).putLong("screenshots_since",System.currentTimeMillis()).apply();ScreenshotScanJob.schedule(this);load();}
     private void toggleImages(boolean on){if(!on){app.config.flag("screenshots",false);ScreenshotScanJob.schedule(this);return;}if(ScreenshotScanJob.hasPermission(this)){enableImages();return;}app.config.flag("screenshots",false);infoAction("自动识别新截图","安卓的图片权限范围可能覆盖相册；轻记只查询授权后新增的截屏文件，不识别普通照片。Android 14+ 需要允许所有图片才能监测未来截图；也可以继续使用单张截图分享。",()->requestPermissions(Build.VERSION.SDK_INT>=34?new String[]{Manifest.permission.READ_MEDIA_IMAGES,Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED}:new String[]{Build.VERSION.SDK_INT>=33?Manifest.permission.READ_MEDIA_IMAGES:Manifest.permission.READ_EXTERNAL_STORAGE},IMAGES_PERMISSION));}
@@ -263,7 +281,7 @@ public final class MainActivity extends Activity {
         dialog.setOnShowListener(d->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{try{Uri address=Uri.parse(url.getText().toString().trim());if(!"https".equals(address.getScheme())||address.getHost()==null||address.getUserInfo()!=null){toast("接口必须为完整 HTTPS 地址");return;}String newKey=key.getText().toString().trim();if(enabled.isChecked()&&newKey.isEmpty()&&SecretVault.load(app.config).isEmpty()){toast("开启云端分类前请填写 API Key");return;}if(model.getText().toString().trim().isEmpty()){toast("请填写模型名称");return;}if(!newKey.isEmpty())SecretVault.save(app.config,newKey);app.config.putText("api_url",address.toString());app.config.putText("api_model",model.getText().toString());app.config.flag("cloud_ai",enabled.isChecked());dialog.dismiss();load();}catch(Exception ex){toast("配置保存失败，请重试");}}));dialog.show();
     }
     private void demo(){long now=System.currentTimeMillis();Candidate transfer=LedgerCore.parse(new Evidence(Source.NOTIFICATION,Config.UNIONPAY,"demo1","转入本人银行卡，转账成功500元",now),Set.of());Candidate expense=LedgerCore.parse(new Evidence(Source.NOTIFICATION,Config.WECHAT,"demo2","支付成功38元 商户：瑞幸咖啡",now+10_000),Set.of());Candidate sms=LedgerCore.parse(new Evidence(Source.SMS,"sms:95588","demo3","消费38元 商户：瑞幸咖啡，余额800元",now+11_000),Set.of());Entry first=new Entry(1,transfer,Status.CONFIRMED),second=new Entry(2,expense,Status.CONFIRMED);second.evidence.add(new EvidenceRef(expense.evidence));Decision decision=LedgerCore.decide(sms,List.of(second));info("独立演示 · 不写入账本","本人银行卡转入 500 元 → "+LedgerStore.kindLabel(transfer.kind)+"\n瑞幸咖啡支付 38 元 → "+LedgerStore.kindLabel(expense.kind)+"\n银行短信消费 38 元 → "+(decision.action==Action.MERGE?"合并为同笔消费的证据":"待核对")+"\n短信余额 800 元 → 忽略余额\n\n净支出：¥ "+amount(netExpense(List.of(first,second))));}
-    private String privacyText(){return "交易存储在手机应用私有目录，系统备份已关闭。中文 OCR 使用随 APK 打包的本地模型，图片只在内存处理，不保存录屏文件。长卡号和手机号会被隐藏，验证码不保存。\n\n默认不调用网络模型。开启可选云端分类后，只发送金额、商户、交易类型及本地分类；API 密钥由 Android Keystore 加密保存。\n\n启动时自动检查更新默认开启，每 12 小时最多一次，可在设置关闭。版本检查只连接 GitHub 获取公开版本信息，不发送交易数据；下载和安装均需你确认。\n\n当前自动入账使用本地规则。金额、商户、时间或转账对象存在歧义时会进入待确认；同金额不能作为唯一去重依据。";}
+    private String privacyText(){return "交易存储在手机应用私有目录，系统备份已关闭。中文 OCR 使用随 APK 打包的本地模型，图片只在内存处理，不保存录屏文件。长卡号和手机号会被隐藏，验证码不保存。\n\n自动窗口 OCR 需单独开启，在 Android 14+ 的可见选定支付窗口本地识别，锁屏或切换窗口后丢弃未完成结果。悬浮窗需另行授权，仅显示采集状态。\n\n默认不调用网络模型。开启可选云端分类后，只发送金额、商户、交易类型及本地分类；API 密钥由 Android Keystore 加密保存。\n\n启动时自动检查更新默认开启，每 12 小时最多一次，可在设置关闭。版本检查只连接 GitHub 获取公开版本信息，不发送交易数据；下载和安装均需你确认。\n\n当前自动入账使用本地规则。金额、商户、时间或转账对象存在歧义时会进入待确认；同金额不能作为唯一去重依据。";}
     private void info(String title,String message){TextView content=text(message,14,INK,false);content.setTextIsSelectable(true);content.setPadding(dp(22),dp(16),dp(22),dp(16));ScrollView wrap=new ScrollView(this);wrap.addView(content);new AlertDialog.Builder(this).setTitle(title).setView(wrap).setPositiveButton("知道了",null).show();}
     private void infoAction(String title,String message,Runnable action){new AlertDialog.Builder(this).setTitle(title).setMessage(message).setNegativeButton("暂不开启",(d,w)->load()).setPositiveButton("继续授权",(d,w)->action.run()).show();}
     private void open(Intent intent){try{startActivity(intent);}catch(Exception ex){toast("当前系统没有此设置入口，请到系统设置中手动开启");}}

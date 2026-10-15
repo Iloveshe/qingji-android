@@ -13,7 +13,7 @@ public final class LedgerCore {
     private LedgerCore() {}
     public static final ZoneId ZONE = ZoneId.of("Asia/Shanghai");
     public enum Kind { EXPENSE, INCOME, TRANSFER, REFUND, UNKNOWN }
-    public enum Source { NOTIFICATION, SMS, ACCESSIBILITY, SCREENSHOT, SCREEN_CAPTURE, TEXT_IMPORT }
+    public enum Source { NOTIFICATION, SMS, ACCESSIBILITY, SCREENSHOT, SCREEN_CAPTURE, TEXT_IMPORT, ACCESSIBILITY_OCR }
     public enum Status { CONFIRMED, REVIEW, IGNORED }
     public enum Action { INSERT, MERGE, REVIEW, IGNORE }
 
@@ -67,15 +67,16 @@ public final class LedgerCore {
 
     private static final String NUMBER = "([0-9]{1,9}(?:,[0-9]{3})*(?:\\.[0-9]{1,2})?)(?![0-9.])";
     private static final Pattern ACTION_AMOUNT = Pattern.compile(
-        "(?:实付(?:金额)?|交易金额|支付金额|付款金额|消费(?:金额)?|支出|成功支付|支付(?:成功)?|成功付款|付款(?:成功)?|收款(?:到账|成功)?|收入|到账|入账|转入|转出|转账(?:成功)?|充值(?:成功)?|提现(?:成功)?|还款(?:成功)?|退款(?:成功|到账)?)[：:\\s人民币CNY￥¥]*" + NUMBER + "\\s*(?:元|人民币|CNY)?", Pattern.CASE_INSENSITIVE);
+        "(?:实付(?:金额)?|交易金额|支付金额|付款金额|消费(?:金额|成功)?|扣款(?:金额|成功)?|扣费(?:金额|成功)?|支出|成功支付|支付(?:成功)?|成功付款|付款(?:成功)?|收款(?:到账|成功)?|收入|到账|入账|转入|转出|转账(?:成功)?|充值(?:成功)?|提现(?:成功)?|还款(?:成功)?|退款(?:成功|到账)?)[：:\\s人民币CNY￥¥]*" + NUMBER + "\\s*(?:元|人民币|CNY)?", Pattern.CASE_INSENSITIVE);
+    private static final Pattern RESULT_AMOUNT = Pattern.compile("(?:支付成功|付款成功|消费成功|交易成功|扣款成功)[：:\\s]*[-−]?\\s*[￥¥]?\\s*" + NUMBER + "[ \\t]*(?:元|人民币)?(?=[\\r\\n]|$)");
     private static final Pattern SYMBOL_AMOUNT = Pattern.compile("[￥¥]\\s*" + NUMBER);
     private static final Pattern YUAN_AMOUNT = Pattern.compile(NUMBER + "\\s*元");
     private static final Pattern DATE = Pattern.compile("(20[0-9]{2})[-/.年](\\d{1,2})[-/.月](\\d{1,2})[日]?\\s*(\\d{1,2}):(\\d{2})(?::(\\d{2}))?");
     private static final Pattern SHORT_DATE = Pattern.compile("(?<![0-9/.-])(\\d{1,2})[月/-](\\d{1,2})[日]?\\s*(\\d{1,2}):(\\d{2})(?::(\\d{2}))?");
-    private static final Pattern ORDER = Pattern.compile("(商户订单号|支付订单号|订单号|交易单号|交易流水号|流水号)[：:\\s]*([A-Za-z0-9_-]{6,80})");
+    private static final Pattern ORDER = Pattern.compile("(商户订单号|商户单号|银联订单号|支付订单号|订单号|交易单号|交易流水号|流水号)[：:\\s]*([A-Za-z0-9_-]{6,80})");
     private static final Pattern TAIL = Pattern.compile("(?:尾号|尾数|末四位)[：:\\s(（]*([0-9]{4})(?![0-9])");
     private static final Pattern TARGET_TAIL = Pattern.compile("(?:转入|转至|转到|到账至|目标账户)[^。;；\\n]{0,24}?(?:尾号|尾数)[：:\\s(（]*([0-9]{4})(?![0-9])");
-    private static final Pattern MERCHANT = Pattern.compile("(?:商户(?:名称)?|收款方|收款商家|交易商户|对方户名)[：:\\s]+([^\\n，,。;；]{1,40})");
+    private static final Pattern MERCHANT = Pattern.compile("(?:商户全称|商家名称|商户(?:名称)?|收款方|收款商家|交易商户|对方户名)[：:\\s]+([^\\n，,。;；]{1,40})");
     private static final Pattern AT_MERCHANT = Pattern.compile("(?:向|在)([^\\n，,。;；]{2,32}?)(?:付款|支付|消费)");
     private static boolean contains(String text, String... needles) {
         for (String n : needles) if (text.contains(n)) return true;
@@ -85,15 +86,17 @@ public final class LedgerCore {
     public static Candidate parse(Evidence e, Set<String> ownTails) {
         String text = e.text.replace('\u00a0', ' ').replace('﹕', ':');
         String semantic = text.replace("支付宝", "").replace("微信支付", "").replace("云闪付", "");
+        String direction = semantic.replaceAll("收款方|收款商家|收款人|付款方|付款人|支付方式|付款方式", "");
         // Never retain or send an OTP, even when the message also mentions an amount.
         if (contains(text, "验证码", "动态密码", "一次性密码", "登录密码", "支付密码") ||
-            !contains(semantic, "支付", "消费", "付款", "收款", "到账", "入账", "转账", "转入", "转出", "退款", "充值", "提现", "还款", "收入", "支出")) return null;
-        if (contains(text, "支付失败", "支付未成功", "交易失败", "付款失败", "充值失败", "已取消", "订单关闭", "待支付", "待付款", "支付中", "处理中", "待到账", "待入账", "退款申请", "退款中", "还款申请", "审核中", "请支付", "请付款", "预计到账")) return null;
-        boolean completed = contains(semantic, "支付成功", "付款成功", "交易成功", "收款成功", "收款到账", "退款成功", "退款到账", "充值成功", "还款成功", "转账成功");
+            !contains(semantic, "支付", "消费", "付款", "收款", "到账", "入账", "转账", "转入", "转出", "退款", "充值", "提现", "还款", "收入", "支出", "交易成功", "扣款", "扣费")) return null;
+        if (contains(text, "支付失败", "支付未成功", "交易失败", "付款失败", "充值失败", "扣款失败", "扣费失败", "已取消", "订单关闭", "待支付", "待付款", "支付中", "扣款中", "扣费中", "处理中", "待到账", "待入账", "退款申请", "退款中", "还款申请", "审核中", "请支付", "请付款", "预计到账")) return null;
+        boolean completed = contains(semantic, "支付成功", "付款成功", "交易成功", "消费成功", "扣款成功", "扣费成功", "收款成功", "收款到账", "退款成功", "退款到账", "充值成功", "还款成功", "转账成功");
         if (!completed && contains(text, "优惠券", "立减", "领取", "消费满", "支付满", "付款满", "还款提醒", "待还款", "应还款", "预约转账")) return null;
         if (contains(text, "本月累计", "本月支出", "本日累计", "本年累计", "月度账单", "笔交易", "笔消费")) return null;
         String noBalance = text.replaceAll("(?:可用余额|账户余额|余额|可用额度|剩余额度)[：:\\s]*(?:人民币|CNY|[￥¥])?\\s*[0-9,]+(?:\\.[0-9]{1,2})?\\s*元?", "");
         LinkedHashSet<Long> amounts = amounts(ACTION_AMOUNT, noBalance);
+        if (amounts.isEmpty()) amounts = amounts(RESULT_AMOUNT, noBalance);
         if (amounts.isEmpty()) amounts = amounts(SYMBOL_AMOUNT, noBalance);
         if (amounts.isEmpty()) amounts = amounts(YUAN_AMOUNT, noBalance);
         if (amounts.isEmpty()) return null;
@@ -109,7 +112,7 @@ public final class LedgerCore {
         m = ORDER.matcher(text);
         if (m.find()) {
             c.orderHash = hash(m.group(2));
-            c.orderScope = m.group(1).equals("商户订单号") ? "merchant" : c.rail + ":" + m.group(1);
+            c.orderScope = m.group(1).startsWith("商户") ? "merchant" : c.rail + ":" + m.group(1);
         }
         List<String> tails = new ArrayList<>();
         m = TAIL.matcher(text);
@@ -123,16 +126,16 @@ public final class LedgerCore {
         else if (contains(text, "退款", "退回")) c.kind = Kind.UNKNOWN;
         else if (explicitTransfer) c.kind = Kind.TRANSFER;
         else if (contains(text, "转账", "转入", "转出", "充值", "提现", "还款")) c.kind = Kind.UNKNOWN;
-        else if (contains(text, "收款", "到账", "入账", "收入", "工资")) c.kind = Kind.INCOME;
-        else if (contains(text, "消费", "支付", "付款", "支出")) c.kind = Kind.EXPENSE;
+        else if (contains(direction, "收款", "到账", "入账", "收入", "工资")) c.kind = Kind.INCOME;
+        else if (contains(direction, "消费", "支付", "付款", "支出", "扣款", "扣费")) c.kind = Kind.EXPENSE;
         parseTime(c, text);
         boolean invalidTime = c.reason.equals("交易时间格式无效");
         c.category = category(c.kind, c.merchant + " " + text);
         c.confidence = c.kind == Kind.UNKNOWN ? 0.55 : 0.95;
         c.reason = c.kind == Kind.TRANSFER ? "账户间资金移动，不计入收支" : "识别到明确交易金额与方向";
-        if (c.kind == Kind.UNKNOWN) c.reason = "转账对象不明确，需要区分本人账户与对外转账";
+        if (c.kind == Kind.UNKNOWN) c.reason = contains(semantic,"转账","转入","转出","充值","提现","还款") ? "转账对象不明确，需要区分本人账户与对外转账" : "交易方向不明确，需要核对收支或退款性质";
         if (invalidTime) { c.confidence = 0.50; c.reason = "交易时间格式无效"; }
-        boolean visual = e.source == Source.SCREENSHOT || e.source == Source.SCREEN_CAPTURE || e.source == Source.ACCESSIBILITY || e.source == Source.TEXT_IMPORT;
+        boolean visual = visual(e.source);
         if (visual && (!c.exactTime || c.merchant.isEmpty())) {
             c.confidence = Math.min(c.confidence, 0.76);
             c.reason = "页面缺少交易时间或商户，避免把历史账单误记为新消费";
@@ -219,7 +222,7 @@ public final class LedgerCore {
             boolean undatedVisual = (visual(c.evidence.source) && !c.exactTime) ||
                 row.evidence.stream().anyMatch(r -> visual(r.source) && !p.exactTime);
             boolean visualRepeat = c.exactTime && p.exactTime && delta == 0 && sameMerchant &&
-                (c.evidence.source == Source.SCREENSHOT || c.evidence.source == Source.SCREEN_CAPTURE || c.evidence.source == Source.ACCESSIBILITY);
+                (c.evidence.source == Source.SCREENSHOT || c.evidence.source == Source.SCREEN_CAPTURE || c.evidence.source == Source.ACCESSIBILITY || c.evidence.source == Source.ACCESSIBILITY_OCR);
             if (sameMerchant && !undatedVisual && (differentChannel || visualRepeat)) { strong.add(row); continue; }
             // Equal amounts are never sufficient to merge. Ambiguous cross-source candidates wait.
             if (differentChannel && (c.merchant.isEmpty() || p.merchant.isEmpty() || undatedVisual)) possible.add(row);
@@ -231,7 +234,7 @@ public final class LedgerCore {
     }
 
     private static boolean wallet(String rail) { return rail.equals("微信") || rail.equals("支付宝") || rail.equals("云闪付"); }
-    private static boolean visual(Source s) { return s == Source.SCREENSHOT || s == Source.SCREEN_CAPTURE || s == Source.ACCESSIBILITY || s == Source.TEXT_IMPORT; }
+    private static boolean visual(Source s) { return s == Source.SCREENSHOT || s == Source.SCREEN_CAPTURE || s == Source.ACCESSIBILITY || s == Source.TEXT_IMPORT || s == Source.ACCESSIBILITY_OCR; }
 
     public static String rail(String origin, String text) {
         if (origin.equals("com.tencent.mm") || text.contains("微信支付")) return "微信";

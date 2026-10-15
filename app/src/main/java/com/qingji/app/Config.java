@@ -22,6 +22,12 @@ public final class Config {
     public void flag(String key, boolean value) { prefs.edit().putBoolean(key,value).apply(); }
     public String text(String key, String fallback) { return prefs.getString(key,fallback); }
     public void putText(String key,String value) { prefs.edit().putString(key,value.trim()).apply(); }
+    public void pageStatus(String message) {
+        long now=System.currentTimeMillis();
+        if(message.equals(text("page_status",""))&&now-prefs.getLong("page_status_at",0)<10_000)return;
+        prefs.edit().putString("page_status",message).putLong("page_status_at",now).apply();
+        QingJiApp.app().refresh();
+    }
     public Set<String> apps() {
         Set<String> apps=new HashSet<>();
         for(String pkg:DEFAULT_APPS.keySet()) if(prefs.getBoolean("app_"+pkg,true)) apps.add(pkg);

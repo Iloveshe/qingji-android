@@ -1,42 +1,30 @@
 # 验证记录
 
-2026-10-15，完成 Android 工具链安装和0.1.1 APK 构建（增加应用内更新）。
+2026-10-15，构建 0.1.2（无通知支付窗口 OCR、悬浮状态、云闪付格式）。
 
 ## 已完成
 
-- JDK 17、Android API 36、Build Tools 35.0.0、platform-tools 和 Gradle 8.13 已安装。
-- `:app:assembleDebug :app:lintDebug`：**BUILD SUCCESSFUL**。
-- Android lint：**0 个错误、2 个非阻塞警告**，分别建议使用兼容版 Switch 组件、更新 AndroidX Core 版本。当前使用原生界面和已验证可构建的固定依赖版本。
-- `bash scripts/test-core.sh`：**37 个交易核心测试 + 31 个更新策略测试通过**。
-- `bash scripts/check-source.sh`：17 个 Java 文件语法解析、9 个 XML 文件解析通过。此检查为辅助检查，完整 Android 编译已另外完成。
-- `apksigner verify --verbose --print-certs`：**APK 签名验证通过（v2）**。
-- `zipalign -c -P 16 4`：通过。
-- APK ZIP 完整性检查通过；包含中文 OCR 的本地资源和 ARM64 原生库。
-- ARM64 OCR 原生库的 ELF LOAD 段对齐均为 **16384 字节**。
-- 包名 `com.qingji.app`，版本 `0.1.1` / versionCode 2，目标 Android API 36。
+- JDK 17、Android API 36、Build Tools 35.0.0、Gradle 8.13。
+- `:app:assembleDebug :app:lintDebug`：BUILD SUCCESSFUL；lint 0 错误、2 个原有非阻塞警告（原生 Switch 和固定 AndroidX Core 版本）。原生悬浮组件不使用 AppCompat 的 inflater / tint，相关自定义 View 检查仅在该类上注明适用原因。
+- `bash scripts/test-core.sh`：52 个记账测试 + 31 个更新测试 + 18 个页面采集策略测试，共 101 项通过。
+- `bash scripts/check-source.sh`：19 个 Java、9 个 XML 语法解析通过，完整 Android 类型检查由 Gradle 编译完成。
+- `apksigner verify --verbose --print-certs`：v2 签名通过；与 0.1.0、0.1.1 的证书一致。
+- `zipalign -c -P 16 4`：通过。APK ZIP 完整性通过；OCR 模型与原生库和 0.1.1 字节一致，保留已验证的 ARM64 16 KB ELF LOAD 对齐。
+- APK 内已编译的无障碍配置包含 `canTakeScreenshot=true`，Android 14+ 窗口截图调用有系统版本保护。
+- 包名 `com.qingji.app`，versionName 0.1.2 / versionCode 3，minSdk 26 / targetSdk 36。
 
-## 交付文件
+## 产物
 
-- APK：`qingji-0.1.1-debug.apk`
-- 大小：47,596,632 字节，约 45.4 MiB。
-- SHA-256：`3e0d9dc51434712f91f728b4d85df36227a373ff3dfa06969e4001115fb20256`
-- 调试签名证书 SHA-256：`57a1dcdb9b45ff5f2426b0e2786641195eebe5979db1cf9d6ffe5013a3dda833`
+- `qingji-0.1.2-debug.apk`，47,627,841 字节。
+- SHA-256：`0f7f459a3d6930054b60d2bbbac591984d5ccd88d9c79a80ca6cf7af498fa0e6`。
+- 证书 SHA-256：`57a1dcdb9b45ff5f2426b0e2786641195eebe5979db1cf9d6ffe5013a3dda833`。
 
-- 已与 0.1.0 签名证书比较，完全一致；新版本号高于旧版本，具备覆盖安装条件。实际数据保留仍需实机确认。
-- 更新测试覆盖版本码、兼容性、测试版渠道、检查间隔、HTTPS 主机和重定向边界、路径注入、元数据和包大小限制。
+## 测试覆盖
 
-## 核心测试覆盖
+保留此前 37 项去重、转账、退款、金额精度、时间、广告、验证码与外币测试；增加云闪付结果页负号金额、商户全称、商户单号去重、扣款与失败排除、交易方向缺失、收款方标签歧义、自动 OCR 历史日期与缺日期待确认等 15 项。
 
-本人转账与支出统计、余额误识别、银行短信与支付通知合并、重复投递、两笔同额消费、不同商户 / 订单 / 钱包、无日期截图、历史日期、非法日期、商户订单号范围、本人转账目标关联、无关收入、普通个人转账、退款抵消、失败 / 验证码 / 月汇总排除、广告与待付款排除、还款提醒排除、未确认退款、分币精度、千分位、多金额截图、同订单金额冲突、已忽略记录重放、多候选匹配、长号码隐藏和外币隔离。
+页面策略验证关闭开关、未选 App、锁屏、输入页面、老系统、已解析交易不截图、普通聊天不截图，以及跨窗口节流、同页三次上限和新页重新识别。更新策略验证版本选择、渠道、URL 信任边界、包体积和哈希元数据。
 
-## 仍需实机验证
+## 仍待实机验证
 
-- Redmi Note 12 Turbo 的 UI 布局、系统设置入口和权限弹窗；
-- Android 16 MediaProjection 生命周期与 HyperOS 后台自启动、后台存活；
-- 真实微信、支付宝、云闪付及银行通知、短信、OCR 的覆盖率和长期耗电；
-- SQLite 在进程终止和重启后的行为；
-- 可选云端分类接口与密钥生命周期；
-- 第三方 OCR SDK 的网络行为；
-- HyperOS 更新下载、未知来源授权返回、系统安装器、覆盖安装的数据保留。
-
-编译、静态检查与签名验证不等于实机测试。请按 [DEVICE-CHECKLIST.md](DEVICE-CHECKLIST.md) 验证，尤其是转账归属、误合并和后台被终止后的采集。
+Redmi Note 12 Turbo / Android 16 / HyperOS 3 的无障碍重新授权、窗口截图 / 回调 / 锁屏切换、云闪付实际页面结构、悬浮窗权限 / 拖动 / 显隐、覆盖安装数据保留、后台存活与真实支付解析覆盖率。SDK 编译和纯 Java 测试不能替代这些验证。按 DEVICE-CHECKLIST.md 操作。

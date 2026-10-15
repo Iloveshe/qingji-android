@@ -16,6 +16,7 @@ import java.util.concurrent.*;
 public final class Ocr {
     private static final ExecutorService decoder=Executors.newSingleThreadExecutor();
     public interface Callback {void done(boolean success,String message);}
+    public interface TextCallback {void done(String text,String error);}
     public static void uri(Context context,Uri uri,Source source,String origin,String key,Callback callback) {
         decoder.execute(()-> {
             Bitmap bitmap=null;
@@ -35,14 +36,23 @@ public final class Ocr {
         });
     }
     public static void bitmap(Bitmap bitmap,Source source,String origin,String key,Callback callback) {
-        TextRecognizer recognizer=TextRecognition.getClient(new ChineseTextRecognizerOptions.Builder().build());
-        recognizer.process(InputImage.fromBitmap(bitmap,0)).addOnSuccessListener(result->{
-            String text=result.getText();long now=System.currentTimeMillis();
+        recognize(bitmap,(text,error)->{
+            if(error!=null){callback.done(false,error);return;}
+            long now=System.currentTimeMillis();
             String eventKey=key.isEmpty()?LedgerCore.hash(text):key;
             Evidence e=new Evidence(source,origin,eventKey,text,now);
             if(LedgerCore.parse(e,QingJiApp.app().config.ownTails())==null){callback.done(true,"没有识别到可记账的交易");return;}
             QingJiApp.app().ingest(e,()->callback.done(true,"识别完成，请在账单或待确认中查看"));
-        }).addOnFailureListener(ex->callback.done(false,"OCR 未完成（"+ex.getClass().getSimpleName()+"）"))
-          .addOnCompleteListener(task->{recognizer.close();bitmap.recycle();});
+        });
+    }
+    /** Owns the bitmap and always releases it after local recognition. */
+    public static void recognize(Bitmap bitmap,TextCallback callback) {
+        TextRecognizer recognizer=TextRecognition.getClient(new ChineseTextRecognizerOptions.Builder().build());
+        try {
+            recognizer.process(InputImage.fromBitmap(bitmap,0))
+                .addOnSuccessListener(result->callback.done(result.getText(),null))
+                .addOnFailureListener(ex->callback.done(null,"OCR 未完成（"+ex.getClass().getSimpleName()+"）"))
+                .addOnCompleteListener(task->{recognizer.close();if(!bitmap.isRecycled())bitmap.recycle();});
+        }catch(Exception ex){recognizer.close();if(!bitmap.isRecycled())bitmap.recycle();callback.done(null,"OCR 未能启动");}
     }
 }

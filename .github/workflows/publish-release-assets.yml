@@ -9,11 +9,11 @@ on:
       release_tag:
         description: Existing release tag
         required: true
-        default: v0.1.1
+        default: v0.1.2
       assets_ref:
         description: Git ref containing the verified release files
         required: true
-        default: release-assets/v0.1.1
+        default: release-assets/v0.1.2
 
 permissions:
   contents: read
@@ -28,7 +28,7 @@ jobs:
       - name: Fetch the verified binaries
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.assets_ref || 'release-assets/v0.1.1' }}
+          ref: ${{ inputs.assets_ref || 'release-assets/v0.1.2' }}
           path: release-files
           persist-credentials: false
       - name: Verify and publish the existing build
@@ -36,7 +36,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ inputs.release_tag || 'v0.1.1' }}
+          RELEASE_TAG: ${{ inputs.release_tag || 'v0.1.2' }}
           SOURCE_COMMIT: ${{ github.sha }}
         run: |
           sha256sum --check SHA256SUMS.txt
@@ -55,10 +55,16 @@ jobs:
               or update['apkSize'] != pathlib.Path(apk).stat().st_size
               or update['sha256'] != hashlib.sha256(pathlib.Path(apk).read_bytes()).hexdigest()):
               raise SystemExit('Update manifest does not match the verified APK')
+          endpoint = 'repos/' + os.environ['GH_REPO'] + '/releases?per_page=100'
+          existing = json.loads(subprocess.check_output(['gh', 'api', endpoint], text=True))
+          if not any(item['tag_name'] == tag for item in existing):
+              subprocess.run(['gh', 'release', 'create', tag, '--draft', '--prerelease',
+                              '--target', os.environ['SOURCE_COMMIT'], '--title', '轻记 ' + version,
+                              '--notes-file', 'qingji-install-guide.md'], check=True)
           for name in files:
               subprocess.run(['gh', 'release', 'upload', tag, name, '--clobber'], check=True)
           response = subprocess.check_output(
-              ['gh', 'api', 'repos/' + os.environ['GH_REPO'] + '/releases'], text=True)
+              ['gh', 'api', endpoint], text=True)
           matches = [item for item in json.loads(response) if item['tag_name'] == tag]
           if len(matches) != 1:
               raise SystemExit('Cannot identify the intended draft release')

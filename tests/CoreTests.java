@@ -82,6 +82,32 @@ public class CoreTests {
         Candidate fx=payment(Source.NOTIFICATION,"com.tencent.mm","fx","商店","",T);fx.currency="USD";
         check("foreign currency never mixed into RMB totals",netExpense(List.of(row(1,fx)))==0);
         check("distinct currencies do not merge",decide(fx,List.of(row(2,consume))).action==Action.INSERT);
+        Candidate cloud=parse(Source.ACCESSIBILITY_OCR,"com.unionpay","cloud",
+            "云闪付\n交易成功\n-26.00\n交易类型\n消费\n商户全称\n测试便利店\n交易时间\n2026-10-14 14:00:00\n商户单号\nCLOUD123456",T);
+        check("QuickPass canvas result extracts signed amount and merchant",cloud!=null&&cloud.cents==2600&&cloud.kind==Kind.EXPENSE&&cloud.merchant.equals("测试便利店")&&cloud.status()==Status.CONFIRMED);
+        Candidate cloudBank=parse(Source.SMS,"sms:95588","cloud-bank","消费26.00元\n商户名称：测试便利店\n商户订单号：CLOUD123456",T+1000);
+        check("QuickPass merchant order alias deduplicates bank evidence",decide(cloudBank,List.of(row(20,cloud))).action==Action.MERGE);
+        Candidate generic=parse(Source.ACCESSIBILITY_OCR,"com.unionpay","generic","云闪付\n交易成功\n￥26.00\n商户全称：测试便利店\n2026-10-14 14:00:00",T);
+        check("Generic success is retained for review without inventing direction",generic!=null&&generic.kind==Kind.UNKNOWN&&generic.status()==Status.REVIEW);
+        Candidate alipayGeneric=parse(Source.NOTIFICATION,"com.eg.android.AlipayGphone","generic-alipay","支付宝\n交易成功\n交易金额26.00元",T);
+        check("Alipay brand does not supply missing transaction direction",alipayGeneric!=null&&alipayGeneric.kind==Kind.UNKNOWN);
+        Candidate noDateOcr=parse(Source.ACCESSIBILITY_OCR,"com.unionpay","no-date-ocr","付款成功\n-26.00\n商户全称：测试便利店",T);
+        check("Automatic window OCR still requires review without date",noDateOcr!=null&&noDateOcr.status()==Status.REVIEW);
+        Candidate oldOcr=parse(Source.ACCESSIBILITY_OCR,"com.unionpay","old-ocr","消费26元\n商户全称：测试便利店\n交易时间2025-10-14 14:00:00",T);
+        check("Automatic OCR preserves historical date",oldOcr!=null&&Instant.ofEpochMilli(oldOcr.occurredAt).atZone(ZONE).getYear()==2025);
+        Candidate deduction=parse(Source.SMS,"sms:95588","deduction","扣款成功人民币12.34元，商户全称：测试商店，余额200元",T);
+        check("Debit wording recognized with exact cents",deduction!=null&&deduction.kind==Kind.EXPENSE&&deduction.cents==1234);
+        check("Failed debit ignored",parse(Source.NOTIFICATION,"com.unionpay","failed-debit","扣款失败12元",T)==null);
+        check("Pending debit ignored",parse(Source.NOTIFICATION,"com.unionpay","pending-debit","扣款中12元",T)==null);
+        check("QuickPass brand promotion ignored",parse(Source.NOTIFICATION,"com.unionpay","cloud-ad","云闪付送你26元优惠券",T)==null);
+        check("A result timestamp cannot become its amount",parse(Source.ACCESSIBILITY_OCR,"com.unionpay","date-amount","交易成功\n2026-10-14 14:00:00\n交易类型\n消费",T)==null);
+        check("OTP ignored in automatic window OCR",parse(Source.ACCESSIBILITY_OCR,"com.unionpay","ocr-otp","付款成功26元 验证码123456",T)==null);
+        Candidate ocrTransfer=parse(Source.ACCESSIBILITY_OCR,"com.unionpay","ocr-transfer","转入本人银行卡500元\n商户名称：账户互转\n交易时间2026-10-14 14:00:00",T);
+        check("Window OCR self-transfer does not inflate expense",ocrTransfer!=null&&ocrTransfer.kind==Kind.TRANSFER&&netExpense(List.of(row(21,ocrTransfer)))==0);
+        Candidate payeeLabel=parse(Source.ACCESSIBILITY_OCR,"com.unionpay","payee-label","付款成功26元\n收款方：测试便利店\n交易时间2026-10-14 14:00:00",T);
+        check("Payee field is not an incoming-payment verb",payeeLabel!=null&&payeeLabel.kind==Kind.EXPENSE&&payeeLabel.status()==Status.CONFIRMED);
+        Candidate onlyPayee=parse(Source.ACCESSIBILITY_OCR,"com.unionpay","only-payee","交易成功\n交易金额26元\n收款方：测试便利店\n交易时间2026-10-14 14:00:00",T);
+        check("A counterparty field does not invent direction",onlyPayee!=null&&onlyPayee.kind==Kind.UNKNOWN);
         System.out.println("\n"+passed+" tests passed");
     }
 }

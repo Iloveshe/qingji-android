@@ -126,7 +126,7 @@ public final class LedgerStore extends SQLiteOpenHelper {
     public static String sourceLabel(Source s) {
         switch(s) {
             case NOTIFICATION:return "通知";case SMS:return "短信";case ACCESSIBILITY:return "支付页面";
-            case SCREENSHOT:return "截图";case SCREEN_CAPTURE:return "屏幕识别";default:return "文本导入";
+            case SCREENSHOT:return "截图";case SCREEN_CAPTURE:return "屏幕识别";case ACCESSIBILITY_OCR:return "自动页面 OCR";default:return "文本导入";
         }
     }
     public static String kindLabel(Kind kind) {

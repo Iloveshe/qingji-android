@@ -55,6 +55,7 @@ public final class QingJiApp extends Application {
             case NOTIFICATION:return config.flag("notifications")&&config.allowed(e.origin);
             case SMS:return config.flag("sms")&&e.origin.startsWith("sms:")&&config.senderAllowed(e.origin.substring(4));
             case ACCESSIBILITY:return config.flag("accessibility")&&config.allowed(e.origin);
+            case ACCESSIBILITY_OCR:return config.flag("accessibility")&&config.flag("accessibility_ocr")&&config.allowed(e.origin);
             case SCREEN_CAPTURE:return config.flag("capture_running")&&config.allowed(e.origin);
             case SCREENSHOT:return !e.origin.equals("screenshot-folder")||config.flag("screenshots");
             default:return true;

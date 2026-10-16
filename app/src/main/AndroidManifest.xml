@@ -48,6 +48,8 @@
             android:foregroundServiceType="mediaProjection" />
         <service android:name=".capture.ScreenshotScanJob" android:exported="true"
             android:permission="android.permission.BIND_JOB_SERVICE" />
+        <service android:name=".DiagnosticUploadJob" android:exported="true"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
         <receiver android:name=".capture.SmsReceiver" android:exported="true" android:permission="android.permission.BROADCAST_SMS">
             <intent-filter><action android:name="android.provider.Telephony.SMS_RECEIVED" /></intent-filter>
         </receiver>

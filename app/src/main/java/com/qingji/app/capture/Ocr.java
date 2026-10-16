@@ -37,22 +37,24 @@ public final class Ocr {
     }
     public static void bitmap(Bitmap bitmap,Source source,String origin,String key,Callback callback) {
         recognize(bitmap,(text,error)->{
-            if(error!=null){callback.done(false,error);return;}
+            if(error!=null){bitmap.recycle();callback.done(false,error);return;}
             long now=System.currentTimeMillis();
             String eventKey=key.isEmpty()?LedgerCore.hash(text):key;
             Evidence e=new Evidence(source,origin,eventKey,text,now);
-            if(LedgerCore.parse(e,QingJiApp.app().config.ownTails())==null){callback.done(true,"没有识别到可记账的交易");return;}
-            QingJiApp.app().ingest(e,()->callback.done(true,"识别完成，请在账单或待确认中查看"));
+            ParseResult result=LedgerCore.analyze(e,QingJiApp.app().config.ownTails());
+            QingJiApp.app().diagnostics.analyzed(e,result);
+            if(result.candidate==null){bitmap.recycle();QingJiApp.app().diagnostics.record(LedgerStore.sourceLabel(source),origin,"未匹配",result.code.label);callback.done(true,result.code.label);return;}
+            QingJiApp.app().ingestImage(e,bitmap,()->callback.done(true,"识别完成，请在待确认中对照截图核对"));
         });
     }
-    /** Owns the bitmap and always releases it after local recognition. */
+    /** Caller retains bitmap ownership; callback must release or hand it to ingestImage. */
     public static void recognize(Bitmap bitmap,TextCallback callback) {
         TextRecognizer recognizer=TextRecognition.getClient(new ChineseTextRecognizerOptions.Builder().build());
         try {
             recognizer.process(InputImage.fromBitmap(bitmap,0))
                 .addOnSuccessListener(result->callback.done(result.getText(),null))
                 .addOnFailureListener(ex->callback.done(null,"OCR 未完成（"+ex.getClass().getSimpleName()+"）"))
-                .addOnCompleteListener(task->{recognizer.close();if(!bitmap.isRecycled())bitmap.recycle();});
-        }catch(Exception ex){recognizer.close();if(!bitmap.isRecycled())bitmap.recycle();callback.done(null,"OCR 未能启动");}
+                .addOnCompleteListener(task->recognizer.close());
+        }catch(Exception ex){recognizer.close();callback.done(null,"OCR 未能启动");}
     }
 }

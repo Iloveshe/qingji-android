@@ -9,11 +9,11 @@ on:
       release_tag:
         description: Existing release tag
         required: true
-        default: v0.1.2
+        default: v0.1.3
       assets_ref:
         description: Git ref containing the verified release files
         required: true
-        default: release-assets/v0.1.2
+        default: release-assets/v0.1.3
 
 permissions:
   contents: read
@@ -28,7 +28,7 @@ jobs:
       - name: Fetch the verified binaries
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.assets_ref || 'release-assets/v0.1.2' }}
+          ref: ${{ inputs.assets_ref || 'release-assets/v0.1.3' }}
           path: release-files
           persist-credentials: false
       - name: Verify and publish the existing build
@@ -36,7 +36,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ inputs.release_tag || 'v0.1.2' }}
+          RELEASE_TAG: ${{ inputs.release_tag || 'v0.1.3' }}
           SOURCE_COMMIT: ${{ github.sha }}
         run: |
           sha256sum --check SHA256SUMS.txt

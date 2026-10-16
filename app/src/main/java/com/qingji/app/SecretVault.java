@@ -27,4 +27,14 @@ public final class SecretVault {
         Cipher cipher=Cipher.getInstance("AES/GCM/NoPadding");cipher.init(Cipher.DECRYPT_MODE,key(),new GCMParameterSpec(128,Base64.decode(c.text("api_key_iv",""),Base64.NO_WRAP)));
         return new String(cipher.doFinal(Base64.decode(data,Base64.NO_WRAP)),StandardCharsets.UTF_8);
     }
+    public static void saveDiagnostic(Config c,String value) throws Exception {
+        if(value.isEmpty()){c.prefs.edit().remove("diagnostic_token_cipher").remove("diagnostic_token_iv").apply();return;}
+        Cipher cipher=Cipher.getInstance("AES/GCM/NoPadding");cipher.init(Cipher.ENCRYPT_MODE,key());
+        c.prefs.edit().putString("diagnostic_token_iv",Base64.encodeToString(cipher.getIV(),Base64.NO_WRAP)).putString("diagnostic_token_cipher",Base64.encodeToString(cipher.doFinal(value.getBytes(StandardCharsets.UTF_8)),Base64.NO_WRAP)).apply();
+    }
+    public static String loadDiagnostic(Config c) throws Exception {
+        String data=c.text("diagnostic_token_cipher","");if(data.isEmpty())return "";
+        Cipher cipher=Cipher.getInstance("AES/GCM/NoPadding");cipher.init(Cipher.DECRYPT_MODE,key(),new GCMParameterSpec(128,Base64.decode(c.text("diagnostic_token_iv",""),Base64.NO_WRAP)));
+        return new String(cipher.doFinal(Base64.decode(data,Base64.NO_WRAP)),StandardCharsets.UTF_8);
+    }
 }

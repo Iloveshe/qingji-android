@@ -16,6 +16,20 @@ public final class LedgerCore {
     public enum Source { NOTIFICATION, SMS, ACCESSIBILITY, SCREENSHOT, SCREEN_CAPTURE, TEXT_IMPORT, ACCESSIBILITY_OCR }
     public enum Status { CONFIRMED, REVIEW, IGNORED }
     public enum Action { INSERT, MERGE, REVIEW, IGNORE }
+    public enum ParseCode {
+        ACCEPTED("已识别交易"), SENSITIVE("包含验证码或密码提示，已跳过"),
+        NO_SIGNAL("没有交易关键词"), NOT_COMPLETED("失败、取消或未完成的交易"),
+        PROMOTION("营销或待办提醒"), SUMMARY("多笔交易或汇总账单"), NO_AMOUNT("未识别到有效交易金额"),
+        NOT_RECEIPT("缺少单笔交易凭证特征，已跳过"), UNBOUND_AMOUNT("数字没有明确金额标记，已跳过");
+        public final String label;
+        ParseCode(String label){this.label=label;}
+    }
+    public static final class ParseResult {
+        public final Candidate candidate;
+        public final ParseCode code;
+        private ParseResult(Candidate candidate,ParseCode code){this.candidate=candidate;this.code=code;}
+    }
+    private static ParseResult rejected(ParseCode code){return new ParseResult(null,code);}
 
     public static final class Evidence {
         public final Source source;
@@ -32,7 +46,7 @@ public final class LedgerCore {
     public static final class Candidate {
         public long cents, occurredAt;
         public String currency = "CNY", merchant = "", category = "其他", rail = "", orderHash = "", orderScope = "";
-        public String accountTail = "", targetTail = "", excerpt = "", reason = "";
+        public String accountTail = "", targetTail = "", excerpt = "", reason = "", amountRule = "";
         public Kind kind = Kind.UNKNOWN;
         public double confidence;
         public boolean exactTime;
@@ -65,7 +79,7 @@ public final class LedgerCore {
         public Decision(Action action, long target, String reason) { this.action = action; this.target = target; this.reason = reason; }
     }
 
-    private static final String NUMBER = "([0-9]{1,9}(?:,[0-9]{3})*(?:\\.[0-9]{1,2})?)(?![0-9.])";
+    private static final String NUMBER = "([0-9]{1,9}(?:,[0-9]{3})*(?:\\.[0-9]{1,2})?)(?![0-9.,:/年\\-])";
     private static final Pattern ACTION_AMOUNT = Pattern.compile(
         "(?:实付(?:金额)?|交易金额|支付金额|付款金额|消费(?:金额|成功)?|扣款(?:金额|成功)?|扣费(?:金额|成功)?|支出|成功支付|支付(?:成功)?|成功付款|付款(?:成功)?|收款(?:到账|成功)?|收入|到账|入账|转入|转出|转账(?:成功)?|充值(?:成功)?|提现(?:成功)?|还款(?:成功)?|退款(?:成功|到账)?)[：:\\s人民币CNY￥¥]*" + NUMBER + "\\s*(?:元|人民币|CNY)?", Pattern.CASE_INSENSITIVE);
     private static final Pattern RESULT_AMOUNT = Pattern.compile("(?:支付成功|付款成功|消费成功|交易成功|扣款成功)[：:\\s]*[-−]?\\s*[￥¥]?\\s*" + NUMBER + "[ \\t]*(?:元|人民币)?(?=[\\r\\n]|$)");
@@ -84,23 +98,30 @@ public final class LedgerCore {
     }
 
     public static Candidate parse(Evidence e, Set<String> ownTails) {
+        return analyze(e,ownTails).candidate;
+    }
+    public static ParseResult analyze(Evidence e, Set<String> ownTails) {
         String text = e.text.replace('\u00a0', ' ').replace('﹕', ':');
         String semantic = text.replace("支付宝", "").replace("微信支付", "").replace("云闪付", "");
         String direction = semantic.replaceAll("收款方|收款商家|收款人|付款方|付款人|支付方式|付款方式", "");
         // Never retain or send an OTP, even when the message also mentions an amount.
-        if (contains(text, "验证码", "动态密码", "一次性密码", "登录密码", "支付密码") ||
-            !contains(semantic, "支付", "消费", "付款", "收款", "到账", "入账", "转账", "转入", "转出", "退款", "充值", "提现", "还款", "收入", "支出", "交易成功", "扣款", "扣费")) return null;
-        if (contains(text, "支付失败", "支付未成功", "交易失败", "付款失败", "充值失败", "扣款失败", "扣费失败", "已取消", "订单关闭", "待支付", "待付款", "支付中", "扣款中", "扣费中", "处理中", "待到账", "待入账", "退款申请", "退款中", "还款申请", "审核中", "请支付", "请付款", "预计到账")) return null;
+        if (contains(text, "验证码", "动态密码", "一次性密码", "登录密码", "支付密码")) return rejected(ParseCode.SENSITIVE);
+        if (!contains(semantic, "支付", "消费", "付款", "收款", "到账", "入账", "转账", "转入", "转出", "退款", "充值", "提现", "还款", "收入", "支出", "交易成功", "扣款", "扣费")) return rejected(ParseCode.NO_SIGNAL);
+        if (contains(text, "支付失败", "支付未成功", "交易失败", "付款失败", "充值失败", "扣款失败", "扣费失败", "已取消", "订单关闭", "待支付", "待付款", "支付中", "扣款中", "扣费中", "处理中", "待到账", "待入账", "退款申请", "退款中", "还款申请", "审核中", "请支付", "请付款", "预计到账")) return rejected(ParseCode.NOT_COMPLETED);
         boolean completed = contains(semantic, "支付成功", "付款成功", "交易成功", "消费成功", "扣款成功", "扣费成功", "收款成功", "收款到账", "退款成功", "退款到账", "充值成功", "还款成功", "转账成功");
-        if (!completed && contains(text, "优惠券", "立减", "领取", "消费满", "支付满", "付款满", "还款提醒", "待还款", "应还款", "预约转账")) return null;
-        if (contains(text, "本月累计", "本月支出", "本日累计", "本年累计", "月度账单", "笔交易", "笔消费")) return null;
+        if (!completed && contains(text, "优惠券", "立减", "领取", "消费满", "支付满", "付款满", "还款提醒", "待还款", "应还款", "预约转账")) return rejected(ParseCode.PROMOTION);
+        if (contains(text, "本月累计", "本月支出", "本日累计", "本年累计", "月度账单", "笔交易", "笔消费")) return rejected(ParseCode.SUMMARY);
+        boolean automaticVisual=e.source==Source.ACCESSIBILITY_OCR||e.source==Source.SCREEN_CAPTURE||e.source==Source.ACCESSIBILITY;
+        if(automaticVisual&&!ReceiptPolicy.receipt(text))return rejected(ParseCode.NOT_RECEIPT);
         String noBalance = text.replaceAll("(?:可用余额|账户余额|余额|可用额度|剩余额度)[：:\\s]*(?:人民币|CNY|[￥¥])?\\s*[0-9,]+(?:\\.[0-9]{1,2})?\\s*元?", "");
-        LinkedHashSet<Long> amounts = amounts(ACTION_AMOUNT, noBalance);
-        if (amounts.isEmpty()) amounts = amounts(RESULT_AMOUNT, noBalance);
-        if (amounts.isEmpty()) amounts = amounts(SYMBOL_AMOUNT, noBalance);
-        if (amounts.isEmpty()) amounts = amounts(YUAN_AMOUNT, noBalance);
-        if (amounts.isEmpty()) return null;
+        String rule="ACTION";
+        LinkedHashSet<Long> amounts = amounts(ACTION_AMOUNT, noBalance,automaticVisual);
+        if (amounts.isEmpty()) {amounts = amounts(RESULT_AMOUNT, noBalance,automaticVisual);rule="RESULT";}
+        if (amounts.isEmpty()) {amounts = amounts(SYMBOL_AMOUNT, noBalance);rule="CURRENCY";}
+        if (amounts.isEmpty()) {amounts = amounts(YUAN_AMOUNT, noBalance);rule="YUAN";}
+        if (amounts.isEmpty()) return rejected(automaticVisual&&!amounts(ACTION_AMOUNT,noBalance).isEmpty()?ParseCode.UNBOUND_AMOUNT:ParseCode.NO_AMOUNT);
         Candidate c = new Candidate();
+        c.amountRule=rule;
         c.evidence = e; c.cents = amounts.iterator().next(); c.occurredAt = e.observedAt;
         c.rail = rail(e.origin, text);
         Matcher m = MERCHANT.matcher(text);
@@ -147,17 +168,28 @@ public final class LedgerCore {
         }
         if (contains(text, "已撤销", "撤销交易", "冲正", "交易撤销")) { c.confidence = 0.50; c.reason = "交易发生冲正或撤销，需要核对原账单"; }
         if (c.occurredAt > e.observedAt + 120_000L) { c.confidence = 0.50; c.reason = "交易时间晚于采集时间，需要核对"; }
+        if(e.source==Source.ACCESSIBILITY_OCR||e.source==Source.SCREEN_CAPTURE||e.source==Source.SCREENSHOT){
+            c.confidence=Math.min(c.confidence,0.79);
+            c.reason="OCR 金额可能识别错误，须对照采集截图核对；"+c.reason;
+        }
         // Retain the extracted transaction fields, never a full visible chat or notification body.
         c.excerpt = "识别金额：" + amount(c.cents) + " " + c.currency + "\n类型：" + c.kind +
             "\n商户：" + redact(c.merchant) + "\n时间：" + Instant.ofEpochMilli(c.occurredAt).atZone(ZONE).format(DateTimeFormatter.ofPattern("uuuu-MM-dd HH:mm:ss")) +
             (c.exactTime ? "" : "（采集时间）") + "\n账户尾号：" + c.accountTail + "\n判断：" + c.reason;
-        return c;
+        return new ParseResult(c,ParseCode.ACCEPTED);
     }
 
     private static LinkedHashSet<Long> amounts(Pattern pattern, String text) {
+        return amounts(pattern,text,false);
+    }
+    private static LinkedHashSet<Long> amounts(Pattern pattern,String text,boolean requireBoundMoney) {
         LinkedHashSet<Long> values = new LinkedHashSet<>();
         Matcher m = pattern.matcher(text);
         while (m.find()) {
+            if(requireBoundMoney){
+                String token=m.group(1),matched=m.group();
+                if(!token.contains(".")&&!contains(matched,"￥","¥","人民币","CNY","元","交易金额","付款金额","支付金额","实付金额"))continue;
+            }
             try {
                 long v = new BigDecimal(m.group(1).replace(",", "")).movePointRight(2).longValueExact();
                 if (v > 0 && v <= 99_999_999_999L) values.add(v);
@@ -191,7 +223,7 @@ public final class LedgerCore {
 
     /** Decisions consider persisted ignored entries too, so redelivery cannot revive them. */
     public static Decision decide(Candidate c, List<Entry> entries) {
-        List<Entry> strong = new ArrayList<>(), possible = new ArrayList<>();
+        List<Entry> strong = new ArrayList<>(), possible = new ArrayList<>(), accountConflicts = new ArrayList<>();
         String fp = c.evidence.fingerprint();
         for (Entry row : entries) {
             Candidate p = row.transaction;
@@ -213,12 +245,18 @@ public final class LedgerCore {
                 (c.kind == Kind.TRANSFER && p.kind == Kind.INCOME && !c.targetTail.isEmpty() && c.targetTail.equals(p.accountTail)));
             if (transferPair) { strong.add(row); continue; }
             if (c.kind != p.kind) continue;
+            boolean conflictingAccount = !c.accountTail.isEmpty() && !p.accountTail.isEmpty() && !c.accountTail.equals(p.accountTail);
+            if (sameOrder && conflictingAccount) return new Decision(Action.REVIEW,row.id,"同一订单的支付账户尾号冲突，需要核对");
             if (sameOrder) { strong.add(row); continue; }
             if (delta > 120_000L) continue;
             // Different wallets can represent two genuine purchases at the same shop.
             if (wallet(c.rail) && wallet(p.rail) && !c.rail.equals(p.rail)) continue;
             boolean differentChannel = row.evidence.stream().noneMatch(r -> r.source == c.evidence.source && r.origin.equals(c.evidence.origin));
             boolean sameMerchant = !c.merchant.isEmpty() && normalize(c.merchant).equals(normalize(p.merchant));
+            if (conflictingAccount) {
+                if (differentChannel && sameMerchant) accountConflicts.add(row);
+                continue;
+            }
             boolean undatedVisual = (visual(c.evidence.source) && !c.exactTime) ||
                 row.evidence.stream().anyMatch(r -> visual(r.source) && !p.exactTime);
             boolean visualRepeat = c.exactTime && p.exactTime && delta == 0 && sameMerchant &&
@@ -229,6 +267,7 @@ public final class LedgerCore {
         }
         if (strong.size() == 1) return new Decision(Action.MERGE, strong.get(0).id, "订单号或商户、金额、时间及来源一致");
         if (strong.size() > 1) return new Decision(Action.REVIEW, 0, "有多笔可能匹配的交易，不能自动选择");
+        if (!accountConflicts.isEmpty()) return new Decision(Action.REVIEW,accountConflicts.size()==1?accountConflicts.get(0).id:0,"相似交易的支付账户尾号冲突，需要核对");
         if (!possible.isEmpty()) return new Decision(Action.REVIEW, possible.size() == 1 ? possible.get(0).id : 0, "可能与另一来源重复，但缺少商户或订单信息");
         return new Decision(c.status() == Status.CONFIRMED ? Action.INSERT : Action.REVIEW, 0, c.reason);
     }

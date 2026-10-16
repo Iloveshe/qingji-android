@@ -84,7 +84,7 @@ public class CoreTests {
         check("distinct currencies do not merge",decide(fx,List.of(row(2,consume))).action==Action.INSERT);
         Candidate cloud=parse(Source.ACCESSIBILITY_OCR,"com.unionpay","cloud",
             "云闪付\n交易成功\n-26.00\n交易类型\n消费\n商户全称\n测试便利店\n交易时间\n2026-10-14 14:00:00\n商户单号\nCLOUD123456",T);
-        check("QuickPass canvas result extracts signed amount and merchant",cloud!=null&&cloud.cents==2600&&cloud.kind==Kind.EXPENSE&&cloud.merchant.equals("测试便利店")&&cloud.status()==Status.CONFIRMED);
+        check("QuickPass canvas result extracts signed amount and merchant",cloud!=null&&cloud.cents==2600&&cloud.kind==Kind.EXPENSE&&cloud.merchant.equals("测试便利店")&&cloud.status()==Status.REVIEW);
         Candidate cloudBank=parse(Source.SMS,"sms:95588","cloud-bank","消费26.00元\n商户名称：测试便利店\n商户订单号：CLOUD123456",T+1000);
         check("QuickPass merchant order alias deduplicates bank evidence",decide(cloudBank,List.of(row(20,cloud))).action==Action.MERGE);
         Candidate generic=parse(Source.ACCESSIBILITY_OCR,"com.unionpay","generic","云闪付\n交易成功\n￥26.00\n商户全称：测试便利店\n2026-10-14 14:00:00",T);
@@ -93,7 +93,7 @@ public class CoreTests {
         check("Alipay brand does not supply missing transaction direction",alipayGeneric!=null&&alipayGeneric.kind==Kind.UNKNOWN);
         Candidate noDateOcr=parse(Source.ACCESSIBILITY_OCR,"com.unionpay","no-date-ocr","付款成功\n-26.00\n商户全称：测试便利店",T);
         check("Automatic window OCR still requires review without date",noDateOcr!=null&&noDateOcr.status()==Status.REVIEW);
-        Candidate oldOcr=parse(Source.ACCESSIBILITY_OCR,"com.unionpay","old-ocr","消费26元\n商户全称：测试便利店\n交易时间2025-10-14 14:00:00",T);
+        Candidate oldOcr=parse(Source.ACCESSIBILITY_OCR,"com.unionpay","old-ocr","付款成功26元\n商户全称：测试便利店\n交易时间2025-10-14 14:00:00",T);
         check("Automatic OCR preserves historical date",oldOcr!=null&&Instant.ofEpochMilli(oldOcr.occurredAt).atZone(ZONE).getYear()==2025);
         Candidate deduction=parse(Source.SMS,"sms:95588","deduction","扣款成功人民币12.34元，商户全称：测试商店，余额200元",T);
         check("Debit wording recognized with exact cents",deduction!=null&&deduction.kind==Kind.EXPENSE&&deduction.cents==1234);
@@ -102,12 +102,30 @@ public class CoreTests {
         check("QuickPass brand promotion ignored",parse(Source.NOTIFICATION,"com.unionpay","cloud-ad","云闪付送你26元优惠券",T)==null);
         check("A result timestamp cannot become its amount",parse(Source.ACCESSIBILITY_OCR,"com.unionpay","date-amount","交易成功\n2026-10-14 14:00:00\n交易类型\n消费",T)==null);
         check("OTP ignored in automatic window OCR",parse(Source.ACCESSIBILITY_OCR,"com.unionpay","ocr-otp","付款成功26元 验证码123456",T)==null);
-        Candidate ocrTransfer=parse(Source.ACCESSIBILITY_OCR,"com.unionpay","ocr-transfer","转入本人银行卡500元\n商户名称：账户互转\n交易时间2026-10-14 14:00:00",T);
+        Candidate ocrTransfer=parse(Source.ACCESSIBILITY_OCR,"com.unionpay","ocr-transfer","转账成功500元\n转入本人银行卡\n商户名称：账户互转\n交易时间2026-10-14 14:00:00",T);
         check("Window OCR self-transfer does not inflate expense",ocrTransfer!=null&&ocrTransfer.kind==Kind.TRANSFER&&netExpense(List.of(row(21,ocrTransfer)))==0);
         Candidate payeeLabel=parse(Source.ACCESSIBILITY_OCR,"com.unionpay","payee-label","付款成功26元\n收款方：测试便利店\n交易时间2026-10-14 14:00:00",T);
-        check("Payee field is not an incoming-payment verb",payeeLabel!=null&&payeeLabel.kind==Kind.EXPENSE&&payeeLabel.status()==Status.CONFIRMED);
+        check("Payee field is not an incoming-payment verb",payeeLabel!=null&&payeeLabel.kind==Kind.EXPENSE&&payeeLabel.status()==Status.REVIEW);
         Candidate onlyPayee=parse(Source.ACCESSIBILITY_OCR,"com.unionpay","only-payee","交易成功\n交易金额26元\n收款方：测试便利店\n交易时间2026-10-14 14:00:00",T);
         check("A counterparty field does not invent direction",onlyPayee!=null&&onlyPayee.kind==Kind.UNKNOWN);
+        ParseResult sensitive=LedgerCore.analyze(new Evidence(Source.SMS,"sms:95588","sensitive","支付验证码123456，交易38元",T),Set.of());
+        check("Rejected sensitive input has only a fixed diagnostic code",sensitive.candidate==null&&sensitive.code==ParseCode.SENSITIVE&&!sensitive.code.label.contains("123456"));
+        check("Nontransaction diagnostic",LedgerCore.analyze(new Evidence(Source.NOTIFICATION,"com.unionpay","n","云闪付欢迎你",T),Set.of()).code==ParseCode.NO_SIGNAL);
+        check("Incomplete payment diagnostic",LedgerCore.analyze(new Evidence(Source.NOTIFICATION,"com.unionpay","n","付款失败38元",T),Set.of()).code==ParseCode.NOT_COMPLETED);
+        check("Promotion diagnostic",LedgerCore.analyze(new Evidence(Source.NOTIFICATION,"com.unionpay","n","消费满38元领取优惠券",T),Set.of()).code==ParseCode.PROMOTION);
+        check("Summary diagnostic",LedgerCore.analyze(new Evidence(Source.NOTIFICATION,"com.unionpay","n","本月支出500元",T),Set.of()).code==ParseCode.SUMMARY);
+        check("Missing amount diagnostic",LedgerCore.analyze(new Evidence(Source.NOTIFICATION,"com.unionpay","n","付款成功",T),Set.of()).code==ParseCode.NO_AMOUNT);
+        check("Accepted diagnostic keeps parsed candidate",LedgerCore.analyze(new Evidence(Source.NOTIFICATION,"com.unionpay","n","付款成功38元",T),Set.of()).candidate.cents==3800);
+        Candidate walletCard=payment(Source.NOTIFICATION,"com.unionpay","card-wallet","测试便利店","",T);walletCard.accountTail="1234";
+        Candidate bankWrongCard=payment(Source.SMS,"sms:95588","card-bank","测试便利店","",T+1000);bankWrongCard.accountTail="5678";
+        check("Conflicting payment accounts cannot silently merge",decide(bankWrongCard,List.of(row(30,walletCard))).action==Action.REVIEW);
+        Candidate matchingWallet=payment(Source.NOTIFICATION,"com.unionpay","matching-wallet","测试便利店","",T);matchingWallet.accountTail="5678";
+        check("Matching account candidate wins over an unrelated conflicting candidate",decide(bankWrongCard,List.of(row(30,walletCard),row(31,matchingWallet))).target==31&&decide(bankWrongCard,List.of(row(30,walletCard),row(31,matchingWallet))).action==Action.MERGE);
+        Candidate orderWallet=payment(Source.NOTIFICATION,"com.unionpay","order-wallet","测试便利店","SAMEORDER123",T);orderWallet.accountTail="1234";
+        Candidate orderConflict=payment(Source.SMS,"sms:95588","order-bank","测试便利店","SAMEORDER123",T+1000);orderConflict.accountTail="5678";
+        check("Same order with conflicting account requires review",decide(orderConflict,List.of(row(32,orderWallet))).action==Action.REVIEW);
+        Candidate sameAmountTransfer=parse(Source.NOTIFICATION,"com.unionpay","transfer-equal","从尾号1234转入本人银行卡尾号5678，转账成功38元",T);
+        check("Self transfer and equal-sized purchase remain separate",decide(walletCard,List.of(row(33,sameAmountTransfer))).action==Action.INSERT&&netExpense(List.of(row(33,sameAmountTransfer),row(34,walletCard)))==3800);
         System.out.println("\n"+passed+" tests passed");
     }
 }

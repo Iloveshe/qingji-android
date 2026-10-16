@@ -9,15 +9,22 @@ import java.util.*;
 
 /** Private sandbox SQLite, Android file encryption; no cloud backup. */
 public final class LedgerStore extends SQLiteOpenHelper {
-    public LedgerStore(Context c) { super(c,"ledger.db",null,1); setWriteAheadLoggingEnabled(true); }
+    public LedgerStore(Context c) { super(c,"ledger.db",null,2); setWriteAheadLoggingEnabled(true); }
     @Override public void onCreate(SQLiteDatabase db) {
         db.execSQL("CREATE TABLE transactions (id INTEGER PRIMARY KEY AUTOINCREMENT,cents INTEGER NOT NULL,currency TEXT NOT NULL,kind TEXT NOT NULL,merchant TEXT NOT NULL,category TEXT NOT NULL,rail TEXT NOT NULL,occurred_at INTEGER NOT NULL,exact_time INTEGER NOT NULL,order_hash TEXT NOT NULL,order_scope TEXT NOT NULL,account_tail TEXT NOT NULL,target_tail TEXT NOT NULL,confidence REAL NOT NULL,status TEXT NOT NULL,reason TEXT NOT NULL,excerpt TEXT NOT NULL,related_id INTEGER NOT NULL DEFAULT 0,user_edited INTEGER NOT NULL DEFAULT 0)");
         db.execSQL("CREATE INDEX transaction_time ON transactions(occurred_at)");
         db.execSQL("CREATE INDEX transaction_order ON transactions(order_hash,order_scope)");
-        db.execSQL("CREATE TABLE evidence (fingerprint TEXT PRIMARY KEY,transaction_id INTEGER NOT NULL,source TEXT NOT NULL,origin TEXT NOT NULL,event_key TEXT NOT NULL,observed_at INTEGER NOT NULL,excerpt TEXT NOT NULL)");
+        db.execSQL("CREATE TABLE evidence (fingerprint TEXT PRIMARY KEY,transaction_id INTEGER NOT NULL,source TEXT NOT NULL,origin TEXT NOT NULL,event_key TEXT NOT NULL,observed_at INTEGER NOT NULL,excerpt TEXT NOT NULL,image_ref TEXT NOT NULL DEFAULT '',image_note TEXT NOT NULL DEFAULT '')");
         db.execSQL("CREATE INDEX evidence_transaction ON evidence(transaction_id)");
     }
-    @Override public void onUpgrade(SQLiteDatabase db,int oldVersion,int newVersion) { throw new IllegalStateException("Migration required"); }
+    @Override public void onUpgrade(SQLiteDatabase db,int oldVersion,int newVersion) {
+        if(oldVersion<2){
+            db.execSQL("ALTER TABLE evidence ADD COLUMN image_ref TEXT NOT NULL DEFAULT ''");
+            db.execSQL("ALTER TABLE evidence ADD COLUMN image_note TEXT NOT NULL DEFAULT '旧版未保存截图，无法补回'");
+            // Preserve ledger data and user decisions; quarantine only unverified OCR-only postings.
+            db.execSQL("UPDATE transactions SET status='REVIEW',reason='旧版 OCR 自动记录需重新核对金额；历史截图未保存' WHERE status='CONFIRMED' AND user_edited=0 AND EXISTS (SELECT 1 FROM evidence e WHERE e.transaction_id=transactions.id AND e.source IN ('ACCESSIBILITY_OCR','SCREEN_CAPTURE','SCREENSHOT')) AND NOT EXISTS (SELECT 1 FROM evidence e WHERE e.transaction_id=transactions.id AND e.source NOT IN ('ACCESSIBILITY_OCR','SCREEN_CAPTURE','SCREENSHOT'))");
+        }
+    }
     private ContentValues values(Candidate c,Status status,String reason,long related) {
         ContentValues v=new ContentValues();
         v.put("cents",c.cents);v.put("currency",c.currency);v.put("kind",c.kind.name());v.put("merchant",c.merchant);v.put("category",c.category);v.put("rail",c.rail);
@@ -56,10 +63,18 @@ public final class LedgerStore extends SQLiteOpenHelper {
         return rows;
     }
     public synchronized Decision ingest(Candidate c) {
+        return ingest(c,"","此来源为文字证据，没有截图");
+    }
+    public synchronized Decision ingest(Candidate c,String imageRef,String imageNote) {
         SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
         try {
             try(Cursor seen=db.query("evidence",new String[]{"transaction_id"},"fingerprint=?",new String[]{c.evidence.fingerprint()},null,null,null)) {
-                if(seen.moveToFirst()) {db.setTransactionSuccessful();return new Decision(Action.IGNORE,seen.getLong(0),"来源事件已处理");}
+                if(seen.moveToFirst()) {
+                    if(!imageRef.isEmpty()){
+                        ContentValues attach=new ContentValues();attach.put("image_ref",imageRef);attach.put("image_note",imageNote);
+                        db.update("evidence",attach,"fingerprint=? AND image_ref=''",new String[]{c.evidence.fingerprint()});
+                    }
+                    db.setTransactionSuccessful();return new Decision(Action.IGNORE,seen.getLong(0),"来源事件已处理");}
             }
             Decision d=LedgerCore.decide(c,nearby(c));long id;
             if(d.action==Action.MERGE) {
@@ -84,14 +99,25 @@ public final class LedgerStore extends SQLiteOpenHelper {
                 Status state=d.action==Action.REVIEW?Status.REVIEW:Status.CONFIRMED;
                 id=db.insertOrThrow("transactions",null,values(c,state,d.reason,d.target));
             }
-            addEvidence(db,id,c.evidence,c.excerpt);db.setTransactionSuccessful();
+            addEvidence(db,id,c.evidence,c.excerpt,imageRef,imageNote);db.setTransactionSuccessful();
             return new Decision(d.action,id,d.reason);
         } finally {db.endTransaction();}
     }
-    private void addEvidence(SQLiteDatabase db,long id,Evidence e,String excerpt) {
+    private void addEvidence(SQLiteDatabase db,long id,Evidence e,String excerpt,String imageRef,String imageNote) {
         ContentValues v=new ContentValues();v.put("fingerprint",e.fingerprint());v.put("transaction_id",id);v.put("source",e.source.name());v.put("origin",e.origin);v.put("event_key",hash(e.eventKey));v.put("observed_at",e.observedAt);v.put("excerpt",excerpt);
-        db.insertWithOnConflict("evidence",null,v,SQLiteDatabase.CONFLICT_IGNORE);
+        v.put("image_ref",imageRef);v.put("image_note",imageNote);db.insertWithOnConflict("evidence",null,v,SQLiteDatabase.CONFLICT_IGNORE);
     }
+    public static final class StoredEvidence {
+        public final String label,excerpt,imageRef,imageNote;public final long at;
+        StoredEvidence(String label,String excerpt,String imageRef,String imageNote,long at){this.label=label;this.excerpt=excerpt;this.imageRef=imageRef;this.imageNote=imageNote;this.at=at;}
+    }
+    public synchronized List<StoredEvidence> evidence(long id){
+        List<StoredEvidence> rows=new ArrayList<>();
+        try(Cursor c=getReadableDatabase().query("evidence",null,"transaction_id=?",new String[]{Long.toString(id)},null,null,"observed_at ASC")){
+            while(c.moveToNext())rows.add(new StoredEvidence(sourceLabel(Source.valueOf(s(c,"source")))+" · "+s(c,"origin"),s(c,"excerpt"),s(c,"image_ref"),s(c,"image_note"),c.getLong(c.getColumnIndexOrThrow("observed_at"))));
+        }return rows;
+    }
+    public synchronized void clearImages(){ContentValues v=new ContentValues();v.put("image_ref","");v.put("image_note","截图已由用户清除，文字摘要保留");getWritableDatabase().update("evidence",v,null,null);}
     public synchronized void edit(long id,Candidate c,Status state) {
         ContentValues v=values(c,state,"用户已核对",0);v.put("user_edited",1);
         getWritableDatabase().update("transactions",v,"id=?",new String[]{Long.toString(id)});

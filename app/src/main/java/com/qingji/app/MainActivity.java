@@ -32,7 +32,7 @@ import java.util.*;
 public final class MainActivity extends Activity {
     private static final int BG=Color.rgb(244,247,245), INK=Color.rgb(26,47,43), MUTED=Color.rgb(107,124,116);
     private static final int TEAL=Color.rgb(8,126,118), LIGHT=Color.rgb(226,241,233), ORANGE=Color.rgb(166,99,29);
-    private static final int SMS_PERMISSION=100, IMAGES_PERMISSION=101, IMAGE_PICK=200, PROJECTION=201, EXPORT=202;
+    private static final int SMS_PERMISSION=100, IMAGES_PERMISSION=101, IMAGE_PICK=200, PROJECTION=201, EXPORT=202, DIAGNOSTIC_EXPORT=203;
     private final Handler main=new Handler(Looper.getMainLooper());
     private QingJiApp app;
     private LinearLayout root,body;
@@ -69,6 +69,12 @@ public final class MainActivity extends Activity {
         ScreenshotScanJob.schedule(this);load();app.refresh();app.updater.attach(updateUi);
         if(app.config.flag("update_waiting_permission")){app.config.flag("update_waiting_permission",false);if(getPackageManager().canRequestPackageInstalls())app.updater.verifyForInstall();else toast("尚未允许安装更新，可在设置页重试");}
         app.updater.check(false);
+        if(!app.config.flag("evidence_notice_v1")){
+            app.config.flag("evidence_notice_v1",true);
+            new AlertDialog.Builder(this).setTitle("保留截图，方便核对 OCR")
+                .setMessage("OCR 候选现在先进入待确认。是否把识别到交易的采集截图加密保存在本机？截图可能含商户、金额等隐私，不会随诊断日志上传。上限 100 MB，可在设置清除。旧版未保存的截图无法补回。")
+                .setNegativeButton("暂不保存",null).setPositiveButton("开启截图证据",(d,w)->{app.config.flag("evidence_images",true);load();}).show();
+        }
     }
     @Override protected void onPause(){app.updater.detach(updateUi);if(registered){unregisterReceiver(updates);registered=false;}super.onPause();}
     @Override protected void onSaveInstanceState(Bundle out){out.putInt("tab",tab);out.putInt("filter",filter);super.onSaveInstanceState(out);}
@@ -149,10 +155,11 @@ public final class MainActivity extends Activity {
         gap(sources,12);toggle(sources,"支付页面文字","只读取勾选 App 的可见交易文字，无点击操作",app.config.flag("accessibility"),on->{app.config.flag("accessibility",on);if(on&&!accessibilityAccess())confirmAccessibility();});
         add(sources,button(accessibilityAccess()?"无障碍已授权 · 查看系统设置":"开启支付页面识别权限",this::confirmAccessibility));
         gap(sources,12);toggle(sources,"支付窗口自动 OCR（无通知）","Android 14+：文字读不到时自动识别支付窗口，不必每次授权录屏",app.config.flag("accessibility_ocr"),this::toggleAutoOcr);
-        gap(sources,8);add(sources,text("云闪付可对当前选定窗口补识别；其他选定 App 仅在检测到交易结果或详情提示时补识别。图片不保存、不上传。缺少日期或方向会进待确认；安全页面可能无法读取。",12,MUTED,false));
-        gap(sources,12);toggle(sources,"悬浮采集状态","需要“显示在其他应用上层”和页面无障碍服务；可拖动，点按返回轻记",app.config.flag("floating_status"),this::toggleFloating);
+        gap(sources,8);add(sources,text("云闪付可对当前选定窗口补识别；其他选定 App 仅在检测到交易结果或详情提示时补识别。OCR 候选先进入待确认；开启截图证据后可在详情核对采集画面。安全页面可能无法读取。",12,MUTED,false));
+        gap(sources,12);toggle(sources,"悬浮识别与页面记忆","点按识别当前页，长按记住付款页面；“账本”返回轻记，可拖动",app.config.flag("floating_status"),this::toggleFloating);
         add(sources,button(Settings.canDrawOverlays(this)?"悬浮窗已授权 · 查看设置":"允许显示在其他应用上层",this::overlaySettings));
         gap(sources,8);add(sources,text(app.config.text("page_status","页面服务尚未连接"),12,MUTED,false));
+        gap(sources,8);add(sources,button("已记住的付款页面（"+app.config.rememberedPages().size()+"）",this::managePaymentPages));
         gap(sources,12);toggle(sources,"新截图自动识别","授权后监测截屏目录；不扫描普通相册和旧截图",app.config.flag("screenshots"),this::toggleImages);
         add(sources,button("选择或分享一张截图识别",this::pickImage));gap(sources,12);
         add(sources,text("临时屏幕识别",15,INK,true));gap(sources,4);add(sources,text("需要系统屏幕授权及无障碍来识别当前 App；仅处理勾选 App。每 4 秒最多识别一帧，锁屏后停止，可能增加耗电。",12,MUTED,false));gap(sources,8);
@@ -172,8 +179,12 @@ public final class MainActivity extends Activity {
         section("可选云端分类");LinearLayout cloud=card(body);add(cloud,text("默认关闭。本地规则与中文 OCR 不依赖网络。配置后，云端只建议待确认交易的分类，不改变金额、时间或自动确认。",13,MUTED,false));gap(cloud,10);add(cloud,button("配置模型接口与密钥",this::cloudSettings));gap(cloud,8);add(cloud,text(app.config.text("cloud_status","尚未调用云端模型"),12,MUTED,false));
         updateSettings();
         section("数据与诊断");LinearLayout data=card(body);add(data,text("自动合并证据："+app.config.prefs.getLong("merge_count",0)+" 次\n"+app.config.text("last_error","暂无采集错误"),13,MUTED,false));gap(data,8);
+        toggle(data,"保存截图证据","仅保存识别到交易的 OCR 输入图，本机加密，上限 100 MB",app.config.flag("evidence_images"),on->{app.config.flag("evidence_images",on);toast(on?"今后的交易截图将加密保存在本机":"已停止保存新截图，已有截图仍可查看");});gap(data,8);
+        add(data,button("清除截图证据，保留账单",()->new AlertDialog.Builder(this).setTitle("清除全部截图？").setMessage("会删除本机采集截图，账单和文字摘要保留。此操作无法恢复。").setNegativeButton("取消",null).setPositiveButton("清除截图",(d,w)->app.worker.execute(()->{app.store.clearImages();app.evidenceVault.clear();main.post(()->toast("截图证据已清除，账单保留"));})).show()));gap(data,8);
+        add(data,button("查看采集诊断 / 复制排查信息",this::captureDiagnostics));gap(data,8);
+        add(data,button("脱敏日志导出与远程诊断",this::diagnosticSettings));gap(data,8);
         add(data,button("导出全部账单 CSV",this::export));gap(data,8);add(data,button("数据与能力说明",()->info("数据与能力",privacyText()+"\n\n通知内容缺失、银行安全页面、未被识别的格式都可能造成漏记。App 不读取支付账户后台，也不能绕过安全截屏限制。当前版本需在你的实机验证后台与权限兼容性。")));gap(data,8);
-        add(data,button("清空手机内全部账单",()->new AlertDialog.Builder(this).setTitle("清空本地账单？").setMessage("这会删除已确认、待确认和所有交易证据。请先导出需要保留的数据。").setNegativeButton("取消",null).setPositiveButton("清空",(d,w)->app.worker.execute(()->{app.store.clear();app.config.prefs.edit().putLong("merge_count",0).remove("last_capture").apply();main.post(()->{toast("本地账单已清空");load();});})).show()));
+        add(data,button("清空手机内全部账单",()->new AlertDialog.Builder(this).setTitle("清空本地账单？").setMessage("这会删除已确认、待确认和所有交易证据。请先导出需要保留的数据。").setNegativeButton("取消",null).setPositiveButton("清空",(d,w)->app.worker.execute(()->{app.store.clear();app.evidenceVault.clear();app.config.prefs.edit().putLong("merge_count",0).remove("last_capture").apply();main.post(()->{toast("本地账单已清空");load();});})).show()));
         gap(body,18);add(body,text("轻记 "+app.updater.currentVersion()+" · Android 8+\n按 Android 16 / HyperOS 3 设计；实机兼容性待验证",12,MUTED,false));
     }
     private void updateSettings(){
@@ -215,7 +226,7 @@ public final class MainActivity extends Activity {
         if(!on){app.config.flag("accessibility_ocr",false);app.refresh();return;}
         if(Build.VERSION.SDK_INT<34){toast("自动窗口 OCR 需要 Android 14 或更新系统，可使用临时屏幕识别");load();return;}
         new AlertDialog.Builder(this).setTitle("自动识别支付窗口")
-            .setMessage("开启后，轻记可在后台对当前可见、已勾选的云闪付窗口，以及其他已勾选 App 的交易结果窗口截图并本地识别。跳过可识别的密码或输入页面，锁屏或切换窗口后丢弃未完成结果。图片不保存、不上传，也不会点击或操作付款。\n\n需要系统无障碍授权。升级后若画面读取不可用，请在系统无障碍中关闭再开启轻记。")
+            .setMessage("开启后，轻记可在后台对当前可见、已勾选的云闪付窗口，以及其他已勾选 App 的交易结果窗口截图并本地识别。跳过可识别的密码或输入页面，锁屏或切换窗口后丢弃未完成结果。截图证据需另行开启，仅本机加密保存，不随诊断上传，也不会点击或操作付款。\n\n需要系统无障碍授权。升级后若画面读取不可用，请在系统无障碍中关闭再开启轻记。")
             .setNegativeButton("取消",(d,w)->load()).setPositiveButton("开启",(d,w)->{app.config.flag("accessibility_ocr",true);app.config.flag("accessibility",true);app.refresh();if(!accessibilityAccess())confirmAccessibility();load();}).show();
     }
     private void toggleFloating(boolean on){
@@ -224,11 +235,58 @@ public final class MainActivity extends Activity {
         app.refresh();load();
     }
     private void overlaySettings(){infoAction("显示在其他应用上层","这项权限用于悬浮采集状态，不用于读取其他应用。请在系统页允许轻记显示在其他应用上层，然后返回；页面无障碍服务也需要开启。",()->open(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,Uri.parse("package:"+getPackageName()))));}
+    private void managePaymentPages(){
+        List<Config.SavedPage> pages=app.config.rememberedPages();
+        if(pages.isEmpty()){info("付款页面记忆","开启自动 OCR 和悬浮识别后，在已勾选 App 的单笔付款详情页长按悬浮窗左侧，即可尝试记住页面。\n\n只保存应用、页面组件和结构特征值，不保存正文、金额或商户。缺少稳定付款特征、密码或输入页面不会保存。记忆只影响识别触发，不会直接确认账单。");return;}
+        String[] labels=new String[pages.size()];for(int i=0;i<pages.size();i++){Config.SavedPage p=pages.get(i);labels[i]=app.config.appName(p.pkg)+" · "+p.activity.substring(p.activity.lastIndexOf('.')+1)+(app.config.allowed(p.pkg)?"":"（来源未勾选）");}
+        new AlertDialog.Builder(this).setTitle("付款页面（点选删除）").setItems(labels,(d,i)->{app.config.forgetPage(pages.get(i).signature);toast("已删除该页面记忆");load();})
+            .setNegativeButton("关闭",null).setNeutralButton("全部清空",(d,w)->{app.config.forgetAllPages();toast("页面记忆已清空");load();}).show();
+    }
+    private void captureDiagnostics(){
+        boolean connected=app.config.flag("accessibility_connected");
+        String report="轻记 "+app.updater.currentVersion()+" · "+Build.MANUFACTURER+" "+Build.MODEL+" · Android API "+Build.VERSION.SDK_INT+"\n\n"+
+            "自动采集："+(app.config.enabled()?"开启":"暂停")+"\n通知读取："+(notificationAccess()?"已授权":"未授权")+"；服务"+(app.config.flag("notification_connected")?"已连接":"未连接")+
+            "\n页面读取："+(app.config.flag("accessibility")?"开启":"关闭")+"；系统授权"+(accessibilityAccess()?"已开":"未开")+"；服务"+(connected?"已连接":"未连接")+
+            "\n自动 OCR："+(app.config.flag("accessibility_ocr")?"开启":"关闭")+"；窗口截图能力"+(connected&&app.config.flag("accessibility_screenshot_capable")?"已加载":"未加载（可关闭再开启系统无障碍）")+
+            "\n短信："+(app.config.flag("sms")?"开启":"关闭")+"；系统权限"+(checkSelfPermission(Manifest.permission.RECEIVE_SMS)==PackageManager.PERMISSION_GRANTED?"已授权":"未授权")+
+            "\n悬浮窗："+(app.config.flag("floating_status")?"开启":"关闭")+"；系统权限"+(Settings.canDrawOverlays(this)?"已授权":"未授权")+
+            "\n云闪付来源："+(app.config.allowed(Config.UNIONPAY)?"已勾选":"未勾选")+"；页面记忆："+app.config.rememberedPages().size()+" 个\n\n"+app.diagnostics.report();
+        TextView content=text(report,13,INK,false);content.setTextIsSelectable(true);content.setPadding(dp(20),dp(12),dp(20),dp(12));ScrollView wrap=new ScrollView(this);wrap.addView(content);
+        new AlertDialog.Builder(this).setTitle("采集诊断").setView(wrap).setNegativeButton("关闭",null)
+            .setPositiveButton("复制诊断",(d,w)->{getSystemService(android.content.ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("轻记采集诊断",report));toast("诊断已复制，不含交易原文");})
+            .setNeutralButton("清空记录",(d,w)->{app.diagnostics.clear();toast("诊断记录已清空");}).show();
+    }
+    private void diagnosticSettings(){
+        LinearLayout form=column();form.setPadding(dp(20),dp(12),dp(20),dp(12));ScrollView wrap=new ScrollView(this);wrap.addView(form);
+        add(form,text("脱敏包仅含版本、Android API、采集开关、时间、来源类别、规则编号及字段是否齐全。不含金额、商户、卡号、设备标识、截图或识别原文。预览、导出和上传使用同一份白名单字段。",13,MUTED,false));gap(form,10);
+        add(form,button("预览即将导出 / 上传的 JSON",()->{try{info("脱敏诊断预览",app.diagnostics.snapshot(app.updater.currentVersion(),Build.VERSION.SDK_INT).toString(2));}catch(Exception ex){toast("诊断包生成失败");}}));
+        add(form,button("导出脱敏诊断包",()->open(new Intent(Intent.ACTION_CREATE_DOCUMENT).setType("application/json").addCategory(Intent.CATEGORY_OPENABLE).putExtra(Intent.EXTRA_TITLE,"qingji-diagnostics.json"),DIAGNOSTIC_EXPORT)));
+        gap(form,16);add(form,text("远程自动诊断（默认关闭）",16,INK,true));gap(form,8);
+        add(form,text("目前未内置接收服务。填写自己控制的 HTTPS 接口并开启后，系统会约每 15 分钟尝试发送最近 32 条状态，后台限制可能延迟。请勿填公开 Issue 地址。不会发送历史截图。",13,MUTED,false));gap(form,8);
+        EditText endpoint=field(form,"HTTPS 接收地址（不含查询参数）",app.config.text("diagnostic_endpoint",""),InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_URI);
+        EditText token=field(form,"接口 Bearer 令牌（选填，留空保留已有令牌）","",InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        CheckBox enabled=new CheckBox(this);enabled.setText("允许自动发送脱敏诊断");enabled.setChecked(app.config.flag("remote_diagnostics"));add(form,enabled);
+        add(form,text(app.config.text("diagnostic_upload_status","尚未发送远程诊断"),13,MUTED,false));gap(form,8);
+        add(form,button("向已保存接口发送一次",()->{
+            if(!app.config.flag("remote_diagnostics")||!com.qingji.app.core.DiagnosticPolicy.endpoint(app.config.text("diagnostic_endpoint",""))){toast("请先保存有效接收地址并主动开启远程诊断");return;}
+            toast("正在发送脱敏诊断");RemoteDiagnostics.send(()->main.post(()->toast(app.config.text("diagnostic_upload_status","发送已结束"))));
+        }));
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("脱敏诊断").setView(wrap).setNegativeButton("关闭",null)
+            .setNeutralButton("清除远程配置",(d,w)->{app.config.flag("remote_diagnostics",false);app.config.putText("diagnostic_endpoint","");try{SecretVault.saveDiagnostic(app.config,"");}catch(Exception ignored){}RemoteDiagnostics.schedule(this);toast("远程诊断已关闭，接收地址和令牌已清除");})
+            .setPositiveButton("保存配置",null).create();
+        dialog.setOnShowListener(d->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
+            String address=endpoint.getText().toString().trim();
+            if((enabled.isChecked()||!address.isEmpty())&&!com.qingji.app.core.DiagnosticPolicy.endpoint(address)){toast("请填写无查询参数、无用户名密码的 HTTPS 接收地址");return;}
+            try{String credential=token.getText().toString().trim();if(credential.contains("\r")||credential.contains("\n")){toast("令牌不能包含换行");return;}if(!credential.isEmpty())SecretVault.saveDiagnostic(app.config,credential);
+                app.config.putText("diagnostic_endpoint",address);app.config.flag("remote_diagnostics",enabled.isChecked());RemoteDiagnostics.schedule(this);dialog.dismiss();toast(enabled.isChecked()?"远程脱敏诊断已开启":"配置已保存，远程诊断保持关闭");
+            }catch(Exception ex){toast("令牌加密保存失败，配置未启用");}
+        }));dialog.show();
+    }
     private boolean settingContains(String setting,Class<?> service){String values=Settings.Secure.getString(getContentResolver(),setting);if(values==null)return false;ComponentName wanted=new ComponentName(this,service);for(String entry:values.split(":")){ComponentName actual=ComponentName.unflattenFromString(entry);if(wanted.equals(actual))return true;}return false;}
     private boolean notificationAccess(){return settingContains("enabled_notification_listeners",PaymentNotificationService.class);}
     private boolean accessibilityAccess(){return settingContains(Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,PaymentAccessibilityService.class);}
     private void openNotificationSettings(){infoAction("支付通知读取","授权后，轻记只处理勾选 App 的新交易通知。验证码和非交易内容不会保存。隐藏金额的通知无法自动识别。",()->open(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)));}
-    private void confirmAccessibility(){infoAction("支付页面识别","轻记读取你勾选 App 中可见的交易文字；另行开启自动 OCR 后，还可截图识别当前支付窗口，图片不保存、不上传。跳过可识别的密码或输入页面，不点击、不操作支付。系统会提示无障碍具有较大的访问范围，你可以随时关闭。",()->open(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));}
+    private void confirmAccessibility(){infoAction("支付页面识别","轻记读取你勾选 App 中可见的交易文字；另行开启自动 OCR 后，还可截图识别当前支付窗口，截图证据需另行开启，仅本机加密保存、不随诊断上传。跳过可识别的密码或输入页面，不点击、不操作支付。系统会提示无障碍具有较大的访问范围，你可以随时关闭。",()->open(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));}
     private void toggleSms(boolean on){if(!on){app.config.flag("sms",false);return;}if(checkSelfPermission(Manifest.permission.RECEIVE_SMS)==PackageManager.PERMISSION_GRANTED){app.config.flag("sms",true);return;}app.config.flag("sms",false);infoAction("交易短信识别","只处理授权后新到达、来自允许号码前缀的交易短信。不会读取历史短信，不处理验证码。",()->requestPermissions(new String[]{Manifest.permission.RECEIVE_SMS},SMS_PERMISSION));}
     private void enableImages(){app.config.prefs.edit().putBoolean("screenshots",true).putLong("screenshots_since",System.currentTimeMillis()).apply();ScreenshotScanJob.schedule(this);load();}
     private void toggleImages(boolean on){if(!on){app.config.flag("screenshots",false);ScreenshotScanJob.schedule(this);return;}if(ScreenshotScanJob.hasPermission(this)){enableImages();return;}app.config.flag("screenshots",false);infoAction("自动识别新截图","安卓的图片权限范围可能覆盖相册；轻记只查询授权后新增的截屏文件，不识别普通照片。Android 14+ 需要允许所有图片才能监测未来截图；也可以继续使用单张截图分享。",()->requestPermissions(Build.VERSION.SDK_INT>=34?new String[]{Manifest.permission.READ_MEDIA_IMAGES,Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED}:new String[]{Build.VERSION.SDK_INT>=33?Manifest.permission.READ_MEDIA_IMAGES:Manifest.permission.READ_EXTERNAL_STORAGE},IMAGES_PERMISSION));}
@@ -236,12 +294,13 @@ public final class MainActivity extends Activity {
     private void autoStartSettings(){Intent i=new Intent().setComponent(new ComponentName("com.miui.securitycenter","com.miui.permcenter.autostart.AutoStartManagementActivity"));try{startActivity(i);}catch(Exception ex){open(new Intent(Settings.ACTION_SETTINGS));toast("请在系统设置中搜索“自启动”");}}
     private void pickImage(){if(!app.config.enabled()){toast("请先开启自动采集");return;}Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT).setType("image/*").addCategory(Intent.CATEGORY_OPENABLE);startActivityForResult(i,IMAGE_PICK);}
     private void screenCapture(){if(app.config.flag("capture_running")){stopService(new Intent(this,ScreenCaptureService.class));load();return;}if(!app.config.enabled()){toast("请先开启自动采集");return;}if(!accessibilityAccess()){confirmAccessibility();return;}
-        infoAction("开始本次屏幕识别","随后会出现安卓系统的屏幕共享授权。仅识别勾选的支付 App，屏幕图像只在内存处理，不保存录屏。锁屏或点击常驻通知的停止按钮后结束。银行禁止截屏的页面仍无法读取。",()->{if(Build.VERSION.SDK_INT>=33&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED){requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},103);return;}launchProjection();});}
+        infoAction("开始本次屏幕识别","随后会出现安卓系统的屏幕共享授权。仅识别勾选的支付 App，未开启截图证据时屏幕图像只在内存处理；开启后匹配交易的输入图在本机加密保存，不保存录屏。锁屏或点击常驻通知的停止按钮后结束。银行禁止截屏的页面仍无法读取。",()->{if(Build.VERSION.SDK_INT>=33&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED){requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},103);return;}launchProjection();});}
     private void launchProjection(){startActivityForResult(getSystemService(MediaProjectionManager.class).createScreenCaptureIntent(),PROJECTION);}
     private void export(){Intent i=new Intent(Intent.ACTION_CREATE_DOCUMENT).setType("text/csv").addCategory(Intent.CATEGORY_OPENABLE).putExtra(Intent.EXTRA_TITLE,"轻记账单-"+LocalDate.now(ZONE)+".csv");startActivityForResult(i,EXPORT);}
     @Override protected void onActivityResult(int request,int result,Intent data){super.onActivityResult(request,result,data);if(result!=RESULT_OK||data==null)return;
         if(request==IMAGE_PICK&&data.getData()!=null){toast("正在本地识别截图");Uri uri=data.getData();Ocr.uri(this,uri,Source.SCREENSHOT,"picked-image",uri.toString(),(success,message)->main.post(()->{toast(message);load();}));}
         if(request==PROJECTION){Intent i=new Intent(this,ScreenCaptureService.class).putExtra("result",result).putExtra("data",data);try{startForegroundService(i);}catch(Exception ex){toast("屏幕识别未启动，请重新授权");}}
+        if(request==DIAGNOSTIC_EXPORT&&data.getData()!=null){Uri target=data.getData();app.worker.execute(()->{try(OutputStream out=getContentResolver().openOutputStream(target,"wt")){if(out==null)throw new IOException("No output");out.write(app.diagnostics.snapshot(app.updater.currentVersion(),Build.VERSION.SDK_INT).toString(2).getBytes(StandardCharsets.UTF_8));main.post(()->toast("脱敏诊断已导出，不含截图或交易原文"));}catch(Exception ex){main.post(()->toast("诊断导出失败，请重新选择保存位置"));}});}
         if(request==EXPORT&&data.getData()!=null){Uri target=data.getData();app.worker.execute(()->{try(OutputStream out=getContentResolver().openOutputStream(target,"wt")){if(out==null)throw new IOException("No output");StringBuilder csv=new StringBuilder("\ufeff时间,金额,币种,类型,商户,分类,状态,证据数量\r\n");for(Entry e:app.store.list()){Candidate c=e.transaction;csv.append(csvCell(formatTime(c.occurredAt))).append(',').append(amount(c.cents)).append(',').append(csvCell(c.currency)).append(',').append(csvCell(LedgerStore.kindLabel(c.kind))).append(',').append(csvCell(c.merchant)).append(',').append(csvCell(c.category)).append(',').append(csvCell(e.status==Status.CONFIRMED?"已确认":e.status==Status.REVIEW?"待确认":"已忽略")).append(',').append(e.evidence.size()).append("\r\n");}out.write(csv.toString().getBytes(StandardCharsets.UTF_8));main.post(()->toast("账单已导出"));}catch(Exception ex){main.post(()->toast("导出失败，请重新选择保存位置"));}});}
     }
     private static String csvCell(String v){if(v.startsWith("=")||v.startsWith("+")||v.startsWith("-")||v.startsWith("@")||v.startsWith("\t")||v.startsWith("\r"))v="'"+v;return "\""+v.replace("\"","\"\"")+"\"";}
@@ -249,10 +308,28 @@ public final class MainActivity extends Activity {
         add(content,text((c.currency.equals("CNY")?"¥ ":c.currency+" ")+amount(c.cents),30,INK,true));gap(content,10);add(content,text("类型："+LedgerStore.kindLabel(c.kind)+"\n时间："+formatTime(c.occurredAt)+(c.exactTime?"":"（以采集时间暂存）")+"\n商户："+(c.merchant.isEmpty()?"未识别":c.merchant)+"\n来源："+c.rail+"\n判断："+c.reason,14,MUTED,false));gap(content,16);
         AlertDialog dialog=new AlertDialog.Builder(this).setTitle(e.status==Status.REVIEW?"核对交易":"账单详情").setView(wrap).setNegativeButton("关闭",null).create();
         add(content,button(e.status==Status.REVIEW?"核对并入账":"修改账单",()->{dialog.dismiss();editEntry(e);}));gap(content,8);
-        add(content,button("查看交易证据",()->app.worker.execute(()->{String excerpts=app.store.excerpts(e.id);main.post(()->info("本地交易证据",excerpts.isEmpty()?"没有可显示的证据":excerpts));})));
+        add(content,button("查看交易证据与采集截图",()->showEvidence(e.id)));
         long related=app.store.related(e.id);if(e.status==Status.REVIEW&&related>0){gap(content,8);add(content,button("核对与可能重复的账单",()->{dialog.dismiss();showMerge(e.id,related);}));}
         gap(content,8);add(content,button("忽略这笔交易",()->{dialog.dismiss();new AlertDialog.Builder(this).setTitle("忽略这笔交易？").setMessage("忽略后不计入收支，同一来源重复推送也不会恢复。").setNegativeButton("取消",null).setPositiveButton("忽略",(d,w)->app.worker.execute(()->{app.store.ignore(e.id);main.post(this::load);})).show();}));dialog.show();
     }
+    private void showEvidence(long id){app.worker.execute(()->{List<LedgerStore.StoredEvidence> evidence=app.store.evidence(id);main.post(()->{
+        if(isFinishing()||isDestroyed())return;LinearLayout list=column();list.setPadding(dp(20),dp(12),dp(20),dp(16));ScrollView wrap=new ScrollView(this);wrap.addView(list);
+        if(evidence.isEmpty())add(list,text("没有可显示的证据",14,MUTED,false));
+        for(LedgerStore.StoredEvidence item:evidence){add(list,text(item.label+"\n采集时间："+formatTime(item.at),14,INK,true));gap(list,8);
+            TextView excerpt=text("识别摘要（并非原始画面）\n"+item.excerpt,13,MUTED,false);excerpt.setTextIsSelectable(true);add(list,excerpt);gap(list,8);
+            if(!item.imageRef.isEmpty())add(list,button("查看采集截图 · 可缩放",()->showEvidenceImage(item.imageRef)));
+            else add(list,text(item.imageNote.isEmpty()?"此证据没有保存截图":item.imageNote,13,ORANGE,false));gap(list,20);}
+        new AlertDialog.Builder(this).setTitle("本地交易证据").setView(wrap).setNegativeButton("关闭",null).show();
+    });});}
+    private void showEvidenceImage(String ref){toast("正在解密本地截图");app.worker.execute(()->{
+        try{android.graphics.Bitmap bitmap=app.evidenceVault.load(ref);main.post(()->{
+            if(isFinishing()||isDestroyed()){bitmap.recycle();return;}
+            Dialog dialog=new Dialog(this,android.R.style.Theme_Material_Light_NoActionBar);LinearLayout content=column();content.setPadding(dp(12),dp(12),dp(12),dp(12));
+            add(content,text("采集时的 OCR 输入图 · 双指缩放 / 拖动\n仅本机保存，不随诊断日志上传",13,INK,false));
+            EvidenceImageView image=new EvidenceImageView(this,bitmap);content.addView(image,new LinearLayout.LayoutParams(-1,0,1));add(content,button("关闭截图",dialog::dismiss));dialog.setContentView(content);
+            dialog.getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);dialog.setOnDismissListener(d->{image.setImageDrawable(null);bitmap.recycle();});dialog.show();dialog.getWindow().setLayout(-1,-1);
+        });}catch(Exception|OutOfMemoryError ex){main.post(()->toast("截图不存在、无法解密或内存不足；文字摘要仍保留"));}
+    });}
     private void showMerge(long from,long to){Entry a=app.store.get(from),b=app.store.get(to);if(a==null||b==null){toast("候选账单已变动");return;}Candidate target=b.transaction;
         new AlertDialog.Builder(this).setTitle("这是同一笔交易吗？").setMessage("已有账单："+(target.merchant.isEmpty()?LedgerStore.kindLabel(target.kind):target.merchant)+"\n"+target.currency+" "+amount(target.cents)+" · "+formatTime(target.occurredAt)+"\n类型："+LedgerStore.kindLabel(target.kind)+"\n\n合并后只保留已有账单的金额和类型，将新来源附加为证据。").setNegativeButton("保留两笔",null).setPositiveButton("合并到已有账单",(d,w)->app.worker.execute(()->{boolean ok=app.store.manualMerge(from,to);main.post(()->{toast(ok?"证据已合并":"金额或币种不同，无法合并");load();});})).show();
     }
@@ -281,9 +358,10 @@ public final class MainActivity extends Activity {
         dialog.setOnShowListener(d->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{try{Uri address=Uri.parse(url.getText().toString().trim());if(!"https".equals(address.getScheme())||address.getHost()==null||address.getUserInfo()!=null){toast("接口必须为完整 HTTPS 地址");return;}String newKey=key.getText().toString().trim();if(enabled.isChecked()&&newKey.isEmpty()&&SecretVault.load(app.config).isEmpty()){toast("开启云端分类前请填写 API Key");return;}if(model.getText().toString().trim().isEmpty()){toast("请填写模型名称");return;}if(!newKey.isEmpty())SecretVault.save(app.config,newKey);app.config.putText("api_url",address.toString());app.config.putText("api_model",model.getText().toString());app.config.flag("cloud_ai",enabled.isChecked());dialog.dismiss();load();}catch(Exception ex){toast("配置保存失败，请重试");}}));dialog.show();
     }
     private void demo(){long now=System.currentTimeMillis();Candidate transfer=LedgerCore.parse(new Evidence(Source.NOTIFICATION,Config.UNIONPAY,"demo1","转入本人银行卡，转账成功500元",now),Set.of());Candidate expense=LedgerCore.parse(new Evidence(Source.NOTIFICATION,Config.WECHAT,"demo2","支付成功38元 商户：瑞幸咖啡",now+10_000),Set.of());Candidate sms=LedgerCore.parse(new Evidence(Source.SMS,"sms:95588","demo3","消费38元 商户：瑞幸咖啡，余额800元",now+11_000),Set.of());Entry first=new Entry(1,transfer,Status.CONFIRMED),second=new Entry(2,expense,Status.CONFIRMED);second.evidence.add(new EvidenceRef(expense.evidence));Decision decision=LedgerCore.decide(sms,List.of(second));info("独立演示 · 不写入账本","本人银行卡转入 500 元 → "+LedgerStore.kindLabel(transfer.kind)+"\n瑞幸咖啡支付 38 元 → "+LedgerStore.kindLabel(expense.kind)+"\n银行短信消费 38 元 → "+(decision.action==Action.MERGE?"合并为同笔消费的证据":"待核对")+"\n短信余额 800 元 → 忽略余额\n\n净支出：¥ "+amount(netExpense(List.of(first,second))));}
-    private String privacyText(){return "交易存储在手机应用私有目录，系统备份已关闭。中文 OCR 使用随 APK 打包的本地模型，图片只在内存处理，不保存录屏文件。长卡号和手机号会被隐藏，验证码不保存。\n\n自动窗口 OCR 需单独开启，在 Android 14+ 的可见选定支付窗口本地识别，锁屏或切换窗口后丢弃未完成结果。悬浮窗需另行授权，仅显示采集状态。\n\n默认不调用网络模型。开启可选云端分类后，只发送金额、商户、交易类型及本地分类；API 密钥由 Android Keystore 加密保存。\n\n启动时自动检查更新默认开启，每 12 小时最多一次，可在设置关闭。版本检查只连接 GitHub 获取公开版本信息，不发送交易数据；下载和安装均需你确认。\n\n当前自动入账使用本地规则。金额、商户、时间或转账对象存在歧义时会进入待确认；同金额不能作为唯一去重依据。";}
+    private String privacyText(){return "交易存储在手机应用私有目录，系统备份已关闭。中文 OCR 使用随 APK 打包的本地模型，未开启截图证据时，图片只在内存处理。开启后只把匹配交易的 OCR 输入图以 Keystore 密钥加密保存在本机，上限 100 MB，可单独清除；不保存录屏文件。截图保留当时画面，可能包含卡号、余额等隐私，请谨慎展示。文字摘要隐藏长卡号和手机号，验证码不保存。\n\n自动窗口 OCR 需单独开启，在 Android 14+ 的可见选定支付窗口本地识别，锁屏或切换窗口后丢弃未完成结果。悬浮窗需另行授权，仅显示采集状态。\n\n默认不调用网络模型。开启可选云端分类后，只发送金额、商户、交易类型及本地分类；API 密钥由 Android Keystore 加密保存。\n\n启动时自动检查更新默认开启，每 12 小时最多一次，可在设置关闭。版本检查只连接 GitHub 获取公开版本信息，不发送交易数据；下载和安装均需你确认。\n\n远程脱敏诊断默认关闭，需要你配置自己的 HTTPS 接收地址并主动开启；也可只预览或导出诊断包。日志只含白名单状态、规则与字段是否齐全，不含交易原文、金额、商户、卡号、图片或设备标识。\n\n当前自动入账使用本地规则，OCR 候选统一先进入待确认，不能保证零漏记。同金额不能作为唯一去重依据。";}
     private void info(String title,String message){TextView content=text(message,14,INK,false);content.setTextIsSelectable(true);content.setPadding(dp(22),dp(16),dp(22),dp(16));ScrollView wrap=new ScrollView(this);wrap.addView(content);new AlertDialog.Builder(this).setTitle(title).setView(wrap).setPositiveButton("知道了",null).show();}
     private void infoAction(String title,String message,Runnable action){new AlertDialog.Builder(this).setTitle(title).setMessage(message).setNegativeButton("暂不开启",(d,w)->load()).setPositiveButton("继续授权",(d,w)->action.run()).show();}
+    private void open(Intent intent,int request){try{startActivityForResult(intent,request);}catch(Exception ex){toast("无法打开文件保存位置");}}
     private void open(Intent intent){try{startActivity(intent);}catch(Exception ex){toast("当前系统没有此设置入口，请到系统设置中手动开启");}}
     private void toast(String value){Toast.makeText(this,value,Toast.LENGTH_LONG).show();}
     private static String formatTime(long when){return Instant.ofEpochMilli(when).atZone(ZONE).format(TIME);}

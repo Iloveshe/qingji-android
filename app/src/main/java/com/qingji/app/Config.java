@@ -1,6 +1,8 @@
 package com.qingji.app;
 
 import android.content.*;
+import org.json.JSONArray;
+import org.json.JSONObject;
 import java.util.*;
 
 public final class Config {
@@ -26,7 +28,36 @@ public final class Config {
         long now=System.currentTimeMillis();
         if(message.equals(text("page_status",""))&&now-prefs.getLong("page_status_at",0)<10_000)return;
         prefs.edit().putString("page_status",message).putLong("page_status_at",now).apply();
+        if(QingJiApp.app().diagnostics!=null)QingJiApp.app().diagnostics.record("页面服务","", "采集状态",message);
         QingJiApp.app().refresh();
+    }
+    public static final class SavedPage {
+        public final String pkg,activity,signature;
+        SavedPage(String pkg,String activity,String signature){this.pkg=pkg;this.activity=activity;this.signature=signature;}
+    }
+    public synchronized List<SavedPage> rememberedPages(){
+        List<SavedPage> pages=new ArrayList<>();
+        try{JSONArray data=new JSONArray(text("payment_pages","[]"));
+            for(int i=0;i<data.length()&&pages.size()<24;i++){JSONObject row=data.getJSONObject(i);
+                String pkg=row.getString("pkg"),activity=row.getString("activity"),signature=row.getString("signature");
+                if(signature.matches("[a-f0-9]{64}")&&activity.startsWith(pkg+"."))pages.add(new SavedPage(pkg,activity,signature));}
+        }catch(Exception ignored){}
+        return pages;
+    }
+    public synchronized boolean rememberPage(String pkg,String activity,String signature){
+        if(signature==null||!signature.matches("[a-f0-9]{64}"))return false;
+        try{List<SavedPage> pages=rememberedPages();pages.removeIf(p->p.signature.equals(signature));
+            if(pages.size()>=24)pages.remove(0);pages.add(new SavedPage(pkg,activity,signature));savePages(pages);return true;
+        }catch(Exception ex){return false;}
+    }
+    public synchronized boolean remembered(String pkg,String signature){
+        return !signature.isEmpty()&&rememberedPages().stream().anyMatch(p->p.pkg.equals(pkg)&&p.signature.equals(signature));
+    }
+    public synchronized void forgetPage(String signature){List<SavedPage> pages=rememberedPages();pages.removeIf(p->p.signature.equals(signature));savePages(pages);}
+    public synchronized void forgetAllPages(){putText("payment_pages","[]");}
+    private void savePages(List<SavedPage> pages){
+        JSONArray data=new JSONArray();try{for(SavedPage p:pages)data.put(new JSONObject().put("pkg",p.pkg).put("activity",p.activity).put("signature",p.signature));
+            putText("payment_pages",data.toString());}catch(Exception ignored){}
     }
     public Set<String> apps() {
         Set<String> apps=new HashSet<>();

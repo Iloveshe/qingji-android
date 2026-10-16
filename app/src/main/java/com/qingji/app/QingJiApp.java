@@ -17,22 +17,37 @@ public final class QingJiApp extends Application {
     public Config config;
     public LedgerStore store;
     public UpdateManager updater;
+    public CaptureDiagnostics diagnostics;
+    public EvidenceVault evidenceVault;
     public static QingJiApp app() {return instance;}
     @Override public void onCreate() {
-        super.onCreate();instance=this;config=new Config(this);store=new LedgerStore(this);updater=new UpdateManager(this);
+        super.onCreate();instance=this;config=new Config(this);diagnostics=new CaptureDiagnostics(config);store=new LedgerStore(this);updater=new UpdateManager(this);evidenceVault=new EvidenceVault(this);
         config.flag("notification_connected",false);config.flag("accessibility_connected",false);config.flag("capture_running",false);
         NotificationChannel channel=new NotificationChannel(CHANNEL,"屏幕识别运行状态",NotificationManager.IMPORTANCE_LOW);
         getSystemService(NotificationManager.class).createNotificationChannel(channel);
+        RemoteDiagnostics.schedule(this);
     }
     public void refresh() {sendBroadcast(new Intent(REFRESH).setPackage(getPackageName()));}
     public void ingest(Evidence e) {ingest(e,null);}
     public void ingest(Evidence e,Runnable done) {
+        ingestImage(e,null,done);
+    }
+    /** Takes bitmap ownership; encryption and storage run on the ledger worker. */
+    public void ingestImage(Evidence e,android.graphics.Bitmap image,Runnable done) {
         worker.execute(()-> {
             try {
-                if(!shouldProcess(e)) return;
-                Candidate c=LedgerCore.parse(e,config.ownTails());
-                if(c==null) return;
-                Decision d=store.ingest(c);
+                if(!shouldProcess(e)){diagnostics.record(LedgerStore.sourceLabel(e.source),e.origin,"已跳过","采集开关关闭或来源未勾选");return;}
+                ParseResult parsed=LedgerCore.analyze(e,config.ownTails());Candidate c=parsed.candidate;
+                diagnostics.analyzed(e,parsed);
+                if(c==null){diagnostics.record(LedgerStore.sourceLabel(e.source),e.origin,"未匹配",parsed.code.label);return;}
+                String imageRef="",imageNote=image==null?"此来源为文字证据，没有截图":"未开启保存截图证据，本次图片已丢弃";
+                if(image!=null&&config.flag("evidence_images")){
+                    try{imageRef=evidenceVault.save(e.fingerprint(),image);imageNote="采集时用于 OCR 的截图；仅本机加密保存";}
+                    catch(Exception|OutOfMemoryError ex){imageNote="截图保存失败或达到 100 MB 上限，可清理截图后重试";diagnostics.record(LedgerStore.sourceLabel(e.source),e.origin,"证据未保存","本地图片存储失败");}
+                }
+                Decision d=store.ingest(c,imageRef,imageNote);
+                String stage=d.action==Action.MERGE?"已合并":d.action==Action.REVIEW?"待确认":d.action==Action.IGNORE?"已去重跳过":"已入账";
+                diagnostics.record(LedgerStore.sourceLabel(e.source),e.origin,stage,d.reason);
                 if(d.action!=Action.IGNORE) {
                     config.prefs.edit().remove("last_error").apply();
                     config.prefs.edit().putLong("last_capture",System.currentTimeMillis()).putString("last_source",LedgerStore.sourceLabel(e.source)).apply();
@@ -46,7 +61,8 @@ public final class QingJiApp extends Application {
             } catch(Exception ex) {
                 // No raw financial content or credentials in logs.
                 config.putText("last_error","采集未完成："+ex.getClass().getSimpleName());refresh();
-            } finally {if(done!=null) new Handler(Looper.getMainLooper()).post(done);}
+                diagnostics.record(LedgerStore.sourceLabel(e.source),e.origin,"处理失败",ex.getClass().getSimpleName());
+            } finally {if(image!=null&&!image.isRecycled())image.recycle();if(done!=null) new Handler(Looper.getMainLooper()).post(done);}
         });
     }
     private boolean shouldProcess(Evidence e) {
@@ -56,7 +72,8 @@ public final class QingJiApp extends Application {
             case SMS:return config.flag("sms")&&e.origin.startsWith("sms:")&&config.senderAllowed(e.origin.substring(4));
             case ACCESSIBILITY:return config.flag("accessibility")&&config.allowed(e.origin);
             case ACCESSIBILITY_OCR:return config.flag("accessibility")&&config.flag("accessibility_ocr")&&config.allowed(e.origin);
-            case SCREEN_CAPTURE:return config.flag("capture_running")&&config.allowed(e.origin);
+            case SCREEN_CAPTURE:return config.flag("capture_running")&&config.allowed(e.origin)&&
+                !getSystemService(KeyguardManager.class).isDeviceLocked()&&e.origin.equals(com.qingji.app.capture.PaymentAccessibilityService.foregroundPaymentPackage(config));
             case SCREENSHOT:return !e.origin.equals("screenshot-folder")||config.flag("screenshots");
             default:return true;
         }

@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "applicationId": "com.qingji.app",
+  "versionCode": 4,
+  "versionName": "0.1.3",
+  "minSdk": 26,
+  "apkName": "qingji-0.1.3-debug.apk",
+  "apkSize": 47734780,
+  "sha256": "0262a701c2745af297211ca75c73c971d115a070412e22ede74395fa34b13db8"
+}

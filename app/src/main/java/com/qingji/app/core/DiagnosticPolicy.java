@@ -39,5 +39,5 @@ public final class DiagnosticPolicy {
         if(detail.contains("本地图片存储失败"))return "IMAGE_STORAGE";
         return "STATUS_ONLY";
     }
-    public static String rule(String value){return Set.of("ACTION","RESULT","CURRENCY","YUAN").contains(value==null?"":value)?value:"NONE";}
+    public static String rule(String value){return Set.of("ACTION","REFUND","RESULT","CURRENCY","YUAN").contains(value==null?"":value)?value:"NONE";}
 }

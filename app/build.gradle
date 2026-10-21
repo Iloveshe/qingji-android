@@ -1,13 +1,19 @@
 plugins { id 'com.android.application' }
+configurations { robolectricSdk { transitive = false } }
+def robolectricSdkDirectory = layout.buildDirectory.dir('robolectric-sdk')
+tasks.register('prepareRobolectricSdk', Sync) {
+    from configurations.robolectricSdk
+    into robolectricSdkDirectory
+}
 android {
     namespace 'com.qingji.app'
     compileSdk 36
     defaultConfig {
-        applicationId 'com.qingji.app'
+        applicationId 'com.qingji.app.next'
         minSdk 26
         targetSdk 36
-        versionCode 4
-        versionName '0.1.3'
+        versionCode 5
+        versionName '0.1.4'
     }
     compileOptions {
         coreLibraryDesugaringEnabled true
@@ -15,6 +21,24 @@ android {
         targetCompatibility JavaVersion.VERSION_17
     }
     buildTypes { release { minifyEnabled false } }
+    testOptions {
+        unitTests.includeAndroidResources = true
+        unitTests.all {
+            // Resolve the test runtime through Gradle instead of downloading into the user's home.
+            dependsOn 'prepareRobolectricSdk'
+            systemProperty 'robolectric.offline', 'true'
+            systemProperty 'robolectric.dependency.dir', robolectricSdkDirectory.get().asFile.absolutePath
+            jvmArgs '--add-opens=java.base/java.lang=ALL-UNNAMED',
+                '--add-opens=java.base/java.util=ALL-UNNAMED',
+                '--add-opens=java.base/java.io=ALL-UNNAMED',
+                '--add-opens=java.base/java.net=ALL-UNNAMED',
+                '--add-opens=java.base/java.security=ALL-UNNAMED',
+                '--add-opens=java.base/java.text=ALL-UNNAMED',
+                '--add-opens=java.base/jdk.internal.access=ALL-UNNAMED',
+                '--add-opens=java.desktop/java.awt.font=ALL-UNNAMED',
+                '--add-opens=jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED'
+        }
+    }
 }
 dependencies {
     // Align the OCR SDK's older Kotlin adapters with AndroidX's merged stdlib.
@@ -23,4 +47,8 @@ dependencies {
     coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.5'
     // Bundled Chinese OCR: recognition works without downloading a model on the phone.
     implementation 'com.google.mlkit:text-recognition-chinese:16.0.1'
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.robolectric:robolectric:4.17'
+    // Matches @Config(sdk = 34) in LedgerStoreTest.
+    robolectricSdk 'org.robolectric:android-all-instrumented:14-robolectric-10818077-i7'
 }

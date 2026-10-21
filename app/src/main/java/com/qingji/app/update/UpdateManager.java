@@ -105,9 +105,9 @@ public final class UpdateManager {
                     if (release.optBoolean("draft") || (!includePreview && release.optBoolean("prerelease"))) continue;
                     String tag = release.getString("tag_name");
                     JSONArray assets = release.getJSONArray("assets");
-                    JSONObject metadata = findAsset(assets, "update.json");
-                    if (metadata == null) continue; // The original 0.1.0 has no update manifest.
-                    String metadataUrl = UpdatePolicy.assetUrl(tag, "update.json");
+                    JSONObject metadata = findAsset(assets, UpdatePolicy.MANIFEST_NAME);
+                    if (metadata == null) continue; // Skip releases from the legacy signing/application channel.
+                    String metadataUrl = UpdatePolicy.assetUrl(tag, UpdatePolicy.MANIFEST_NAME);
                     if (!metadataUrl.equals(metadata.getString("browser_download_url"))) throw new IOException("metadata URL");
                     JSONObject json = new JSONObject(readText(metadataUrl, 48 * 1024));
                     UpdatePolicy.Offer candidate = parse(json, tag, release.optBoolean("prerelease"), release.optString("body"));

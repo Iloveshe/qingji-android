@@ -82,12 +82,15 @@ public final class LedgerCore {
     private static final String NUMBER = "([0-9]{1,9}(?:,[0-9]{3})*(?:\\.[0-9]{1,2})?)(?![0-9.,:/年\\-])";
     private static final Pattern ACTION_AMOUNT = Pattern.compile(
         "(?:实付(?:金额)?|交易金额|支付金额|付款金额|消费(?:金额|成功)?|扣款(?:金额|成功)?|扣费(?:金额|成功)?|支出|成功支付|支付(?:成功)?|成功付款|付款(?:成功)?|收款(?:到账|成功)?|收入|到账|入账|转入|转出|转账(?:成功)?|充值(?:成功)?|提现(?:成功)?|还款(?:成功)?|退款(?:成功|到账)?)[：:\\s人民币CNY￥¥]*" + NUMBER + "\\s*(?:元|人民币|CNY)?", Pattern.CASE_INSENSITIVE);
+    private static final Pattern REFUND_AMOUNT = Pattern.compile(
+        "(?:本次退款(?:金额)?|实际退款(?:金额)?|实退(?:金额)?|退款(?:金额|成功|到账)?|已退款)[：:\\s人民币CNY￥¥+＋]*" + NUMBER + "\\s*(?:元|人民币|CNY)?", Pattern.CASE_INSENSITIVE);
     private static final Pattern RESULT_AMOUNT = Pattern.compile("(?:支付成功|付款成功|消费成功|交易成功|扣款成功)[：:\\s]*[-−]?\\s*[￥¥]?\\s*" + NUMBER + "[ \\t]*(?:元|人民币)?(?=[\\r\\n]|$)");
     private static final Pattern SYMBOL_AMOUNT = Pattern.compile("[￥¥]\\s*" + NUMBER);
     private static final Pattern YUAN_AMOUNT = Pattern.compile(NUMBER + "\\s*元");
     private static final Pattern DATE = Pattern.compile("(20[0-9]{2})[-/.年](\\d{1,2})[-/.月](\\d{1,2})[日]?\\s*(\\d{1,2}):(\\d{2})(?::(\\d{2}))?");
     private static final Pattern SHORT_DATE = Pattern.compile("(?<![0-9/.-])(\\d{1,2})[月/-](\\d{1,2})[日]?\\s*(\\d{1,2}):(\\d{2})(?::(\\d{2}))?");
     private static final Pattern ORDER = Pattern.compile("(商户订单号|商户单号|银联订单号|支付订单号|订单号|交易单号|交易流水号|流水号)[：:\\s]*([A-Za-z0-9_-]{6,80})");
+    private static final Pattern REFUND_ID = Pattern.compile("(商户退款订单号|商户退款单号|商户退款号|退款订单号|退款单号|退款流水号|退款编号|退款号)[：:\\s]*([A-Za-z0-9_-]{6,80})");
     private static final Pattern TAIL = Pattern.compile("(?:尾号|尾数|末四位)[：:\\s(（]*([0-9]{4})(?![0-9])");
     private static final Pattern TARGET_TAIL = Pattern.compile("(?:转入|转至|转到|到账至|目标账户)[^。;；\\n]{0,24}?(?:尾号|尾数)[：:\\s(（]*([0-9]{4})(?![0-9])");
     private static final Pattern MERCHANT = Pattern.compile("(?:商户全称|商家名称|商户(?:名称)?|收款方|收款商家|交易商户|对方户名)[：:\\s]+([^\\n，,。;；]{1,40})");
@@ -103,7 +106,7 @@ public final class LedgerCore {
     public static ParseResult analyze(Evidence e, Set<String> ownTails) {
         String text = e.text.replace('\u00a0', ' ').replace('﹕', ':');
         String semantic = text.replace("支付宝", "").replace("微信支付", "").replace("云闪付", "");
-        String direction = semantic.replaceAll("收款方|收款商家|收款人|付款方|付款人|支付方式|付款方式", "");
+        String direction = semantic.replaceAll("(?:收款|付款)(?:银行)?(?:账户|账号|帐号|户名|姓名|名称|方|人|商家|银行)|支付方式|付款方式", "");
         // Never retain or send an OTP, even when the message also mentions an amount.
         if (contains(text, "验证码", "动态密码", "一次性密码", "登录密码", "支付密码")) return rejected(ParseCode.SENSITIVE);
         if (!contains(semantic, "支付", "消费", "付款", "收款", "到账", "入账", "转账", "转入", "转出", "退款", "充值", "提现", "还款", "收入", "支出", "交易成功", "扣款", "扣费")) return rejected(ParseCode.NO_SIGNAL);
@@ -114,8 +117,12 @@ public final class LedgerCore {
         boolean automaticVisual=e.source==Source.ACCESSIBILITY_OCR||e.source==Source.SCREEN_CAPTURE||e.source==Source.ACCESSIBILITY;
         if(automaticVisual&&!ReceiptPolicy.receipt(text))return rejected(ParseCode.NOT_RECEIPT);
         String noBalance = text.replaceAll("(?:可用余额|账户余额|余额|可用额度|剩余额度)[：:\\s]*(?:人民币|CNY|[￥¥])?\\s*[0-9,]+(?:\\.[0-9]{1,2})?\\s*元?", "");
-        String rule="ACTION";
-        LinkedHashSet<Long> amounts = amounts(ACTION_AMOUNT, noBalance,automaticVisual);
+        boolean refundText=contains(text,"退款","退回");
+        LinkedHashSet<Long> amounts=refundText?amounts(REFUND_AMOUNT,noBalance,automaticVisual):new LinkedHashSet<>();
+        boolean unclearRefundAmount=refundText&&amounts.isEmpty();
+        String rule=amounts.isEmpty()?"ACTION":"REFUND";
+        // A refund receipt can also quote the original purchase. Prefer its refund field.
+        if(amounts.isEmpty()) amounts=amounts(ACTION_AMOUNT,noBalance,automaticVisual);
         if (amounts.isEmpty()) {amounts = amounts(RESULT_AMOUNT, noBalance,automaticVisual);rule="RESULT";}
         if (amounts.isEmpty()) {amounts = amounts(SYMBOL_AMOUNT, noBalance);rule="CURRENCY";}
         if (amounts.isEmpty()) {amounts = amounts(YUAN_AMOUNT, noBalance);rule="YUAN";}
@@ -147,8 +154,20 @@ public final class LedgerCore {
         else if (contains(text, "退款", "退回")) c.kind = Kind.UNKNOWN;
         else if (explicitTransfer) c.kind = Kind.TRANSFER;
         else if (contains(text, "转账", "转入", "转出", "充值", "提现", "还款")) c.kind = Kind.UNKNOWN;
-        else if (contains(direction, "收款", "到账", "入账", "收入", "工资")) c.kind = Kind.INCOME;
-        else if (contains(direction, "消费", "支付", "付款", "支出", "扣款", "扣费")) c.kind = Kind.EXPENSE;
+        else {
+            boolean incoming=contains(direction,"收款","到账","入账","收入","工资");
+            boolean outgoing=contains(direction,"消费","支付","付款","支出","扣款","扣费");
+            if(incoming&&!outgoing)c.kind=Kind.INCOME;
+            else if(outgoing&&!incoming)c.kind=Kind.EXPENSE;
+        }
+        if(c.kind==Kind.REFUND){
+            m=REFUND_ID.matcher(text);
+            if(m.find()){
+                // Existing identifier columns also hold refund IDs, in a distinct namespace.
+                c.orderHash=hash(m.group(2));
+                c.orderScope=m.group(1).startsWith("商户")?"refund:merchant":"refund:"+c.rail+":"+m.group(1);
+            }
+        }
         parseTime(c, text);
         boolean invalidTime = c.reason.equals("交易时间格式无效");
         c.category = category(c.kind, c.merchant + " " + text);
@@ -162,6 +181,7 @@ public final class LedgerCore {
             c.reason = "页面缺少交易时间或商户，避免把历史账单误记为新消费";
         }
         if (amounts.size() > 1) { c.confidence = 0.50; c.reason = "出现多个交易金额，请只提供单笔交易详情"; }
+        if(unclearRefundAmount){c.confidence=Math.min(c.confidence,0.50);c.reason="退款金额未明确标注，请核对本次退款与原支付金额";}
         if (contains(text, "USD", "美元", "HKD", "港币", "EUR", "欧元", "JPY", "日元")) {
             c.currency = contains(text, "USD", "美元") ? "USD" : contains(text, "HKD", "港币") ? "HKD" : contains(text, "EUR", "欧元") ? "EUR" : "JPY";
             c.confidence = Math.min(c.confidence, 0.60); c.reason = "外币交易需核对；不会与人民币合计";
@@ -188,7 +208,7 @@ public final class LedgerCore {
         while (m.find()) {
             if(requireBoundMoney){
                 String token=m.group(1),matched=m.group();
-                if(!token.contains(".")&&!contains(matched,"￥","¥","人民币","CNY","元","交易金额","付款金额","支付金额","实付金额"))continue;
+                if(!token.contains(".")&&!contains(matched,"￥","¥","人民币","CNY","元","交易金额","付款金额","支付金额","实付金额","退款金额","实退金额"))continue;
             }
             try {
                 long v = new BigDecimal(m.group(1).replace(",", "")).movePointRight(2).longValueExact();
@@ -230,20 +250,34 @@ public final class LedgerCore {
             for (EvidenceRef ref : row.evidence) {
                 if (fp.equals(ref.fingerprint)) return new Decision(Action.IGNORE, row.id, "来源事件已处理");
             }
+            boolean refundPair=c.kind==Kind.REFUND&&p.kind==Kind.REFUND;
             boolean orderComparable = !c.orderHash.isEmpty() && !p.orderHash.isEmpty() && c.orderScope.equals(p.orderScope);
-            if (orderComparable && c.orderScope.equals("merchant") && !c.merchant.isEmpty() && !p.merchant.isEmpty() && !normalize(c.merchant).equals(normalize(p.merchant))) continue;
+            if (orderComparable && (c.orderScope.equals("merchant")||c.orderScope.equals("refund:merchant")) && !c.merchant.isEmpty() && !p.merchant.isEmpty() && !normalize(c.merchant).equals(normalize(p.merchant))) continue;
             if (orderComparable && !c.orderHash.equals(p.orderHash)) continue;
-            boolean sameOrder = orderComparable && c.orderHash.equals(p.orderHash);
+            // A purchase order may have several legitimate refunds, including equal amounts.
+            // Legacy refund rows only have purchase IDs; those are not refund event identities.
+            boolean sameOrder = orderComparable && c.orderHash.equals(p.orderHash) &&
+                (!refundPair||c.orderScope.startsWith("refund:"));
             if (sameOrder && c.kind == p.kind && (c.cents != p.cents || !c.currency.equals(p.currency))) {
                 return new Decision(Action.REVIEW, row.id, "同一订单出现不同金额或币种，需要核对");
             }
             if (c.cents != p.cents || !c.currency.equals(p.currency)) continue;
             long delta = Math.abs(c.occurredAt - p.occurredAt);
+            boolean differentChannel = row.evidence.stream().noneMatch(r -> r.source == c.evidence.source && r.origin.equals(c.evidence.origin));
+            boolean undatedVisual = (visual(c.evidence.source) && !c.exactTime) ||
+                row.evidence.stream().anyMatch(r -> visual(r.source) && !p.exactTime);
             // Pair a transfer with its incoming bank evidence only with a known target account.
             boolean transferPair = delta <= 300_000L && (
                 (p.kind == Kind.TRANSFER && c.kind == Kind.INCOME && !p.targetTail.isEmpty() && p.targetTail.equals(c.accountTail)) ||
                 (c.kind == Kind.TRANSFER && p.kind == Kind.INCOME && !c.targetTail.isEmpty() && c.targetTail.equals(p.accountTail)));
-            if (transferPair) { strong.add(row); continue; }
+            if (transferPair) {
+                // Do not consume a second independent bank event, or turn a reviewed OCR
+                // candidate into an already-confirmed transfer via an existing income row.
+                if(!differentChannel)continue;
+                if(undatedVisual||c.status()!=Status.CONFIRMED||row.status==Status.REVIEW)possible.add(row);
+                else strong.add(row);
+                continue;
+            }
             if (c.kind != p.kind) continue;
             boolean conflictingAccount = !c.accountTail.isEmpty() && !p.accountTail.isEmpty() && !c.accountTail.equals(p.accountTail);
             if (sameOrder && conflictingAccount) return new Decision(Action.REVIEW,row.id,"同一订单的支付账户尾号冲突，需要核对");
@@ -251,17 +285,17 @@ public final class LedgerCore {
             if (delta > 120_000L) continue;
             // Different wallets can represent two genuine purchases at the same shop.
             if (wallet(c.rail) && wallet(p.rail) && !c.rail.equals(p.rail)) continue;
-            boolean differentChannel = row.evidence.stream().noneMatch(r -> r.source == c.evidence.source && r.origin.equals(c.evidence.origin));
             boolean sameMerchant = !c.merchant.isEmpty() && normalize(c.merchant).equals(normalize(p.merchant));
             if (conflictingAccount) {
                 if (differentChannel && sameMerchant) accountConflicts.add(row);
                 continue;
             }
-            boolean undatedVisual = (visual(c.evidence.source) && !c.exactTime) ||
-                row.evidence.stream().anyMatch(r -> visual(r.source) && !p.exactTime);
             boolean visualRepeat = c.exactTime && p.exactTime && delta == 0 && sameMerchant &&
                 (c.evidence.source == Source.SCREENSHOT || c.evidence.source == Source.SCREEN_CAPTURE || c.evidence.source == Source.ACCESSIBILITY || c.evidence.source == Source.ACCESSIBILITY_OCR);
-            if (sameMerchant && !undatedVisual && (differentChannel || visualRepeat)) { strong.add(row); continue; }
+            if (sameMerchant && !undatedVisual && (differentChannel || visualRepeat)) {
+                if(refundPair)possible.add(row);else strong.add(row);
+                continue;
+            }
             // Equal amounts are never sufficient to merge. Ambiguous cross-source candidates wait.
             if (differentChannel && (c.merchant.isEmpty() || p.merchant.isEmpty() || undatedVisual)) possible.add(row);
         }

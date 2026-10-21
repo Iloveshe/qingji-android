@@ -79,7 +79,9 @@ public final class LedgerStore extends SQLiteOpenHelper {
             Decision d=LedgerCore.decide(c,nearby(c));long id;
             if(d.action==Action.MERGE) {
                 id=d.target;Entry row=get(id);
-                if(row!=null && !row.userEdited && row.status!=Status.IGNORED) {
+                // Unverified OCR may add evidence, but must not rewrite a confirmed transaction.
+                if(row!=null && !row.userEdited && row.status!=Status.IGNORED
+                        && (row.status!=Status.CONFIRMED || c.status()==Status.CONFIRMED)) {
                     Candidate old=row.transaction;
                     boolean promoteTransfer=c.kind==Kind.TRANSFER && old.kind==Kind.INCOME;
                     boolean moreDetails=(c.exactTime&&!old.exactTime)||(!c.merchant.isEmpty()&&old.merchant.isEmpty())||(!c.orderHash.isEmpty()&&old.orderHash.isEmpty());

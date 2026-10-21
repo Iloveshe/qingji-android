@@ -92,7 +92,7 @@ public final class MainActivity extends Activity {
     private void render(){
         int oldScroll=scroll==null?0:scroll.getScrollY();root.removeAllViews();
         LinearLayout header=horizontal();header.setPadding(dp(22),dp(15),dp(22),dp(10));
-        LinearLayout brand=column();brand.addView(text("轻记",26,INK,true));brand.addView(text("本地识别 · 自动归账",12,MUTED,false));header.addView(brand,new LinearLayout.LayoutParams(0,-2,1));
+        LinearLayout brand=column();brand.addView(text("轻记新版",26,INK,true));brand.addView(text("本地识别 · 自动归账",12,MUTED,false));header.addView(brand,new LinearLayout.LayoutParams(0,-2,1));
         TextView privacy=text(app.config.flag("cloud_ai")?"云端分类已开":"数据留在手机",12,TEAL,true);privacy.setPadding(dp(10),dp(8),dp(10),dp(8));privacy.setBackground(shape(LIGHT,20));privacy.setOnClickListener(v->info("数据与隐私",privacyText()));header.addView(privacy);add(root,header);
         scroll=new ScrollView(this);scroll.setFillViewport(true);scroll.setClipToPadding(false);
         body=column();body.setPadding(dp(20),dp(8),dp(20),dp(24));scroll.addView(body);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));

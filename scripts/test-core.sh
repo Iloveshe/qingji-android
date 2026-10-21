@@ -7,7 +7,7 @@ java -m jdk.compiler/com.sun.tools.javac.Main -source 17 -target 17 -encoding UT
   "$PROJECT_DIR/app/src/main/java/com/qingji/app/core/ReceiptPolicy.java" \
   "$PROJECT_DIR/app/src/main/java/com/qingji/app/core/EvidenceCipher.java" \
   "$PROJECT_DIR/app/src/main/java/com/qingji/app/core/DiagnosticPolicy.java" "$PROJECT_DIR/tests/ReliabilityTests.java" \
-  "$PROJECT_DIR/app/src/main/java/com/qingji/app/core/LedgerCore.java" "$PROJECT_DIR/tests/CoreTests.java" \
+  "$PROJECT_DIR/app/src/main/java/com/qingji/app/core/LedgerCore.java" "$PROJECT_DIR/tests/CoreTests.java" "$PROJECT_DIR/tests/AccountingRegressionTests.java" \
   "$PROJECT_DIR/app/src/main/java/com/qingji/app/update/UpdatePolicy.java" "$PROJECT_DIR/tests/UpdateTests.java" \
   "$PROJECT_DIR/app/src/main/java/com/qingji/app/core/PageReadPolicy.java" "$PROJECT_DIR/tests/PageReadTests.java" \
   "$PROJECT_DIR/app/src/main/java/com/qingji/app/core/PaymentPageSignature.java" "$PROJECT_DIR/tests/PageSignatureTests.java"
@@ -16,3 +16,4 @@ java -cp "$PROJECT_DIR/.test-build" UpdateTests
 java -cp "$PROJECT_DIR/.test-build" PageReadTests
 java -cp "$PROJECT_DIR/.test-build" PageSignatureTests
 java -cp "$PROJECT_DIR/.test-build" ReliabilityTests
+java -cp "$PROJECT_DIR/.test-build" AccountingRegressionTests

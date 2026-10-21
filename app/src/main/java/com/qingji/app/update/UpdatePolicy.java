@@ -7,7 +7,9 @@ import java.util.Set;
 /** Android-independent release selection and download trust boundaries. */
 public final class UpdatePolicy {
     public static final String REPO = "Iloveshe/qingji-android";
-    public static final String APP_ID = "com.qingji.app";
+    public static final String APP_ID = "com.qingji.app.next";
+    // Legacy installs only read update.json; keep their update checks on their own channel.
+    public static final String MANIFEST_NAME = "update-next.json";
     public static final String RELEASES = "https://github.com/" + REPO + "/releases";
     public static final String API = "https://api.github.com/repos/" + REPO + "/releases?per_page=30";
     public static final long MAX_APK_BYTES = 128L * 1024 * 1024;

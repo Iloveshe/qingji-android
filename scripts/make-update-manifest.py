@@ -3,7 +3,6 @@
 import argparse
 import hashlib
 import json
-import os
 from pathlib import Path
 import re
 import subprocess
@@ -18,15 +17,21 @@ if not args.apk.is_file() or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,119}
 badging = subprocess.check_output([str(args.aapt2), 'dump', 'badging', str(args.apk)], text=True)
 package = re.search(r"package: name='([^']+)' versionCode='([0-9]+)' versionName='([^']+)'", badging)
 minimum = re.search(r"(?:minSdkVersion|sdkVersion):'([0-9]+)'", badging)
-if package is None or minimum is None or package[1] != 'com.qingji.app':
+if package is None or minimum is None or package[1] != 'com.qingji.app.next':
     raise SystemExit('Cannot read the intended application metadata')
+if args.output.name != 'update-next.json':
+    raise SystemExit('Use update-next.json to keep legacy installs on their own update channel')
 if not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?', package[3]):
     raise SystemExit('Unsupported version name')
 size = args.apk.stat().st_size
 if not 0 < size <= 128 * 1024 * 1024:
     raise SystemExit('APK exceeds updater download limit')
+digest = hashlib.sha256()
+with args.apk.open('rb') as stream:
+    for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+        digest.update(chunk)
 metadata = dict(schemaVersion=1, applicationId=package[1], versionCode=int(package[2]),
                 versionName=package[3], minSdk=int(minimum[1]), apkName=args.apk.name,
-                apkSize=size, sha256=hashlib.file_digest(args.apk.open('rb'), 'sha256').hexdigest())
+                apkSize=size, sha256=digest.hexdigest())
 args.output.write_text(json.dumps(metadata, ensure_ascii=False, indent=2) + '\n')
 print('Update manifest generated for ' + package[3])
